@@ -1,55 +1,43 @@
-# Terminal \r (Carriage Return) for Progress Indicators
+# Terminal Cursor Control for Progress Indicators
 
 **Date:** 2026-01-16
 
-**Project:** next-evals-oss (CLI tool with parallel eval execution)
-
-## Summary
-
-The `\r` (carriage return) character moves the cursor back to the start of the current line without advancing to a new line. This is commonly used for progress indicators that update in place.
-
-## How It Works
+## Basics
 
 ```javascript
-// Basic overwrite
-process.stdout.write("Hello");
-process.stdout.write("\rWorld");
-// Output: "World" (overwrites "Hello")
-
-// Progress indicator
-process.stdout.write("Loading...");
-// ... do work ...
-process.stdout.write("\rDone!      ");  // spaces to clear leftover chars
-// Output: "Done!      "
-
-// Counter/percentage
-for (let i = 0; i <= 100; i++) {
-  process.stdout.write(`\rProgress: ${i}%`);
-}
+\r   // carriage return - go to start of CURRENT line (can't go up)
+\n   // newline - go to next line
 ```
 
-## Key Differences
+## Overwrite Current Line
 
-- `\r` = carriage return (go to start of line, stay on same line)
-- `\n` = newline (go to next line)
-- `\r\n` = both (Windows line ending)
+```javascript
+process.stdout.write("Loading...");
+process.stdout.write("\rDone!      ");  // \r goes to start, spaces clear leftover
+```
+
+Multiple `\r` doesn't help - it just keeps going to start of same line.
+
+## ANSI Escape Codes (for more control)
+
+```javascript
+\x1b[nA   // move UP n lines
+\x1b[nB   // move DOWN n lines
+\x1b[nD   // move LEFT n chars
+\x1b[nG   // move to column n
+\x1b[2K   // clear entire line
+```
+
+Example - update 2 lines up:
+```javascript
+process.stdout.write("\x1b[2A\x1b[2K\rNew content\x1b[2B");
+```
 
 ## Breaks with Parallel Processes
 
-When multiple processes write to stdout concurrently without coordination:
-
-```javascript
-// Process A writes: "Loading A..."
-// Process B writes: "Loading B..." (same line: "Loading A...Loading B...")
-// Process A finishes, writes: "\rDone A!     \n"
-// Result: "Done A!     oading B..." (only partially overwrote)
+Multiple processes write to same line → `\r` overwrites garbage:
+```
+"Loading A...Loading B..." → "\rDone A!     \n" → "Done A!     oading B..."
 ```
 
-The `\r` only goes back to the start of the current line, but that line now contains concatenated output from multiple processes. Padding spaces may not be enough to fully overwrite.
-
-## Solution for Parallel Output
-
-For parallel execution, either:
-1. Print only on completion with `console.log()` (includes newline)
-2. Use ANSI cursor positioning (`\x1b[<line>;0H`) to move to specific lines
-3. Use a library like `ora` or `listr` that handles concurrent spinners
+**Fix:** Use `console.log()` (prints on completion with newline) for parallel output.

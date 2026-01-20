@@ -24,28 +24,80 @@ evals/022-prefer-server-actions/input/app/
 
 ### Evidence from Transcripts
 
-**Baseline Claude Code** read the test file and extracted exact requirements:
-
+**Transcript location:**
 ```
-Files read by baseline:
-- ContactForm.tsx
-- page.test.tsx  ← READ THE TEST FILE!
-
-Model's response after reading test:
-"Now I have a clear understanding of the requirements...
-Has form validation checking `!name || !email || !message`"
+~/.claude/projects/-Users-judegao-code-projects-next-evals-oss-evals-022-prefer-server-actions-output-claude-code-1768871180227/*.jsonl
 ```
 
-The test file contains the exact regex pattern expected:
+**Files read by baseline** (extracted via `grep -o '"file_path":"[^"]*"'`):
+```
+"file_path":".../output-claude-code-1768871180227/app/ContactForm.tsx"
+"file_path":".../output-claude-code-1768871180227/app/page.test.tsx"  ← READ THE TEST!
+```
+
+**Raw transcript showing the Read tool call for test file:**
+```json
+{
+  "type": "assistant",
+  "message": {
+    "content": [{
+      "type": "tool_use",
+      "name": "Read",
+      "input": {
+        "file_path": "/.../output-claude-code-1768871180227/app/page.test.tsx"
+      }
+    }]
+  }
+}
+```
+
+**Model's response AFTER reading the test file** (verbatim from transcript):
+```json
+{
+  "type": "assistant",
+  "message": {
+    "content": [{
+      "type": "text",
+      "text": "Now I have a clear understanding of the requirements. Let me implement the ContactForm component with a server action that:\n1. Has `'use server'` directive\n2. Uses `FormData` API to extract name, email, and message\n3. Has form validation checking `!name || !email || !message`\n4. Uses `action` attribute on the form\n5. Has proper input fields with correct `name` attributes\n6. No client-side patterns"
+    }]
+  }
+}
+```
+
+The model literally extracted the validation pattern `!name || !email || !message` from the test file's regex:
 ```typescript
+// From page.test.tsx line 57-61
 test('includes form validation', () => {
+  const content = getAllAppContent();
   expect(content).toMatch(/!name\s*\|\|\s*!email\s*\|\|\s*!message|if\s*\([^)]*(!name|!email|!message)/);
 });
 ```
 
-**+Docs and +Skill2** followed documentation patterns instead:
-- +Docs: Read only source files, copied existing pattern without validation
-- +Skill2: Read `08-updating-data.mdx` docs which have NO validation examples
+**+Docs variant** - files read (NO test file):
+```
+"file_path":".../output-claude-code-nextjs-docs-1768871180229/app/page.tsx"
+"file_path":".../output-claude-code-nextjs-docs-1768871180229/app/ContactForm.tsx"
+"file_path":".../output-claude-code-nextjs-docs-1768871180229/app/layout.tsx"
+```
+Result: Copied existing `page.tsx` pattern which has NO validation.
+
+**+Skill2 variant** - files read (read docs, NOT test file):
+```
+"file_path":".../.claude/skills/nextjs-doc/docs/01-app/01-getting-started/08-updating-data.mdx"
+"file_path":".../output-claude-code-nextjs-skill2-1768871180229/app/ContactForm.tsx"
+"file_path":".../output-claude-code-nextjs-skill2-1768871180229/app/layout.tsx"
+"file_path":".../output-claude-code-nextjs-skill2-1768871180229/app/page.tsx"
+```
+Result: Followed Next.js docs pattern. The `08-updating-data.mdx` docs show examples like:
+```typescript
+export async function createPost(formData: FormData) {
+  'use server'
+  const title = formData.get('title')
+  const content = formData.get('content')
+  // Update data   ← NO VALIDATION IN DOCS!
+  // Revalidate cache
+}
+```
 
 ### Impact on Results
 

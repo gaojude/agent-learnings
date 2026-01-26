@@ -250,10 +250,10 @@ Requirements:
 **What the agent sees:**
 
 When the eval starts, the agent receives:
-1. The contents of `PROMPT.md` as its initial instruction
+1. The contents of `PROMPT.md` as its initial instruction (passed directly, not as a file)
 2. Access to all files in your eval folder (except `PROMPT.md` and `EVAL.ts`)
 
-The agent can explore the codebase using file reading and shell commands, just like a human developer would. It does NOT automatically see all file contents—it must choose to read them.
+The agent does NOT see `PROMPT.md` or `EVAL.ts` as files in the sandbox—they're excluded. The agent can explore the codebase using file reading and shell commands, just like a human developer would. It does NOT automatically see all file contents—it must choose to read them.
 
 **Tip:** If certain files are critical context, mention them in your prompt: "See `src/App.tsx` for the current implementation."
 
@@ -397,6 +397,36 @@ results/my-experiment/2026-01-26T12-00-00Z/
 ```
 
 **Debugging tip:** If an eval fails, check `transcript.jsonl` to see exactly what the agent did. This is invaluable for understanding failures.
+
+### Understanding a Failed Run
+
+When an eval fails, `result.json` shows what went wrong:
+
+```json
+{
+  "status": "failed",
+  "failedStep": "tests",
+  "error": "Test 'logout button exists' failed: Expected 'logout' in at least one .tsx file",
+  "duration": 52.3
+}
+```
+
+The `transcript.jsonl` shows the agent's conversation (one JSON object per line):
+
+```json
+{"role": "assistant", "content": "I'll add a logout button to the header..."}
+{"role": "tool", "name": "write_file", "input": {"path": "src/Header.tsx", ...}}
+{"role": "assistant", "content": "Done! I've added the logout button."}
+```
+
+**Common failure patterns:**
+
+| Symptom | Likely Cause | How to Fix |
+|---------|--------------|------------|
+| Agent edited the wrong file | Unclear prompt | Be more explicit about which file to modify |
+| Agent misunderstood the task | Ambiguous requirements | Add specific acceptance criteria to PROMPT.md |
+| Code doesn't compile | Agent introduced syntax errors | Check `outputs/build.txt`; add `scripts: ['build']` |
+| Tests pass but feature is broken | Weak tests | Write tests that verify actual behavior |
 
 ---
 

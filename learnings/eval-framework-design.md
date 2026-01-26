@@ -6,20 +6,27 @@ Test whether an AI coding agent can complete real tasks in your codebase.
 
 ---
 
-## Quick Start (5 steps)
+## Quick Start
 
 ```bash
 # 1. Create a new eval project
 npx eval init
 
-# 2. Set your API key
-export ANTHROPIC_API_KEY=your-key
-
-# 3. Run the example eval
-npx eval configs/default.ts
+# 2. Run the example eval
+npx eval experiments/default.ts
 ```
 
-That's it. You now have results in `results/default/`.
+Results appear in `results/default/` with a summary printed to your terminal:
+
+```
+┌─────────────────────────────────────────────────┐
+│  add-button                                     │
+│  ✓ 7/10 passed (70%)                            │
+│  Mean duration: 45.2s                           │
+│                                                 │
+│  Details: results/default/2026-01-26T12-00-00Z/ │
+└─────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -37,14 +44,33 @@ my-evals/
 │       ├── package.json
 │       ├── PROMPT.md      # "Add a logout button to the header"
 │       └── EVAL.ts        # Tests to verify the agent did it right
-├── configs/
+├── experiments/
 │   └── default.ts         # Which evals to run, how many times
+├── .env                   # API keys
 └── results/               # Results appear here
 ```
 
 ---
 
-## Step 1: Write Your Task
+## Step 1: Set Up Your .env
+
+Create a `.env` file in your project root:
+
+```bash
+# Required - for Anthropic API
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Required - for Vercel Sandbox (isolated VMs)
+VERCEL_TOKEN=your-vercel-token
+# OR use OIDC token
+VERCEL_OIDC_TOKEN=your-oidc-token
+```
+
+The framework reads these automatically. Never pass API keys manually.
+
+---
+
+## Step 2: Write Your Task
 
 Create `PROMPT.md` with instructions for the agent:
 
@@ -60,7 +86,7 @@ Write it like you'd write for a junior developer. Be specific about what you wan
 
 ---
 
-## Step 2: Write Your Tests
+## Step 3: Write Your Tests
 
 Create `EVAL.ts` to check if the agent succeeded:
 
@@ -86,6 +112,8 @@ test('app still builds', async () => {
 })
 ```
 
+**How the import works:** The framework injects `EVAL.ts` into the sandbox after the agent runs. The `@vercel/eval-framework` package provides a global `sandbox` instance that's pre-configured to interact with the current sandbox environment. You don't need to install it in your eval fixture—it's provided by the framework at runtime.
+
 The `sandbox` object lets you:
 - `sandbox.exec('command')` — run shell commands
 - `sandbox.readFile('path')` — read files
@@ -94,28 +122,125 @@ The `sandbox` object lets you:
 
 ---
 
-## Step 3: Create a Config
+## Step 4: Create an Experiment
 
-Create `configs/my-test.ts`:
+Create `experiments/my-experiment.ts`:
 
 ```ts
 export default {
-  evals: ['add-button'],  // which evals to run
-  runs: 5,                // run each eval 5 times
-  model: 'sonnet',        // which Claude model to use
+  agent: 'claude-code',     // which agent to use (required concept)
+  model: 'sonnet',          // model is secondary to agent choice
+  evals: ['add-button'],    // which evals to run
+  runs: 5,                  // run each eval 5 times
 }
 ```
 
-### Config Options
+---
 
-| Option | What it does | Default |
-|--------|--------------|---------|
-| `evals` | Which evals to run | all evals |
-| `runs` | How many times to run each eval | 1 |
-| `model` | Claude model (`'sonnet'`, `'opus'`) | `'sonnet'` |
-| `scripts` | npm scripts that must pass (e.g., `['build', 'lint']`) | none |
-| `setup` | Code to run before the agent starts | none |
-| `earlyExit` | Stop after first success? | `true` |
+## Step 5: Run It
+
+```bash
+npx eval experiments/my-experiment.ts
+```
+
+---
+
+## Step 6: Check Results
+
+After each eval completes, the framework prints a summary:
+
+```
+┌─────────────────────────────────────────────────┐
+│  add-button                                     │
+│  ✓ 7/10 passed (70%)                            │
+│  Mean duration: 45.2s                           │
+│                                                 │
+│  Details: results/my-experiment/2026-01-26.../  │
+└─────────────────────────────────────────────────┘
+```
+
+Full results are in `results/<experiment-name>/<timestamp>/`:
+
+```
+results/my-experiment/2026-01-26T12-00-00Z/
+├── add-button/
+│   ├── run-1/
+│   │   ├── result.json      # Did it pass? How long?
+│   │   ├── transcript.jsonl # Full agent conversation
+│   │   └── outputs/         # Build logs, test output
+│   ├── run-2/
+│   └── summary.json         # "7 out of 10 runs passed"
+```
+
+---
+
+## Full Experiment Config Reference
+
+```ts
+// experiments/example.ts
+export default {
+  // AGENT (primary choice)
+  // Which agent CLI to use for running evals
+  // Currently supported: 'claude-code'
+  agent: 'claude-code',
+
+  // MODEL (secondary to agent)
+  // Model to pass to the agent
+  // Options depend on agent. For claude-code: 'sonnet', 'opus', 'haiku'
+  // Default: 'sonnet'
+  model: 'opus',
+
+  // EVALS
+  // Which evals to run from the evals/ folder
+  // - undefined: run all evals
+  // - string: run single eval by name
+  // - string[]: run multiple evals by name
+  // - (name) => boolean: run evals matching predicate
+  // Default: all evals
+  evals: ['add-button', 'fix-auth'],
+
+  // RUNS
+  // Number of times to run each eval
+  // Results aggregated in summary.json
+  // Default: 1
+  runs: 10,
+
+  // EARLY EXIT
+  // Stop running after first successful run
+  // Set to false to always run all attempts (useful for measuring pass rate)
+  // Default: true
+  earlyExit: false,
+
+  // SCRIPTS
+  // npm scripts that must exit 0 before tests run
+  // These run `npm run <script>` in order after agent completes
+  // Stops on first failure
+  // Default: []
+  scripts: ['build', 'lint', 'typecheck'],
+
+  // SETUP
+  // Function that runs before agent starts
+  // Use this to install skills, configure the environment, etc.
+  // If setup throws, eval fails immediately
+  // Default: none
+  setup: async (sandbox) => {
+    // Example: Install a skill before the agent runs
+    await sandbox.exec('chmod +x ./skills.sh && ./skills.sh')
+  },
+}
+```
+
+### Config Options Summary Table
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `agent` | `'claude-code'` | `'claude-code'` | Which agent CLI to use |
+| `model` | `string` | `'sonnet'` | Model for the agent (`'opus'`, `'sonnet'`, `'haiku'`) |
+| `evals` | `string \| string[] \| (name) => boolean` | all | Which evals to run |
+| `runs` | `number` | `1` | Number of runs per eval |
+| `earlyExit` | `boolean` | `true` | Stop after first success |
+| `scripts` | `string[]` | `[]` | npm scripts that must pass (runs `npm run <script>`) |
+| `setup` | `(sandbox) => Promise<void>` | none | Setup function before agent starts |
 
 ### Selecting Evals
 
@@ -135,76 +260,29 @@ evals: (name) => name.startsWith('auth-')
 
 ---
 
-## Step 4: Run It
-
-```bash
-npx eval configs/my-test.ts
-```
-
----
-
-## Step 5: Check Results
-
-Results appear in `results/<config-name>/<timestamp>/`:
-
-```
-results/my-test/2026-01-26T12-00-00Z/
-├── add-button/
-│   ├── run-1/
-│   │   ├── result.json      # Did it pass? How long?
-│   │   ├── transcript.jsonl # Full agent conversation
-│   │   └── outputs/         # Build logs, test output
-│   ├── run-2/
-│   └── summary.json         # "7 out of 10 runs passed"
-```
-
-### Understanding summary.json
-
-```json
-{
-  "eval": "add-button",
-  "runs": 10,
-  "passed": 7,
-  "passRate": 0.7,
-  "meanDuration": 45200
-}
-```
-
-**Pass rate of 0.7 = the agent succeeds 70% of the time.**
-
----
-
 ## Common Patterns
 
-### Run setup before the agent starts
+### Install a skill before the agent runs
 
 ```ts
 export default {
   setup: async (sandbox) => {
-    await sandbox.exec('npm install some-package')
+    // Run your skills installation script
+    await sandbox.exec('chmod +x ./skills.sh && ./skills.sh')
   },
 }
 ```
 
-### Require build/lint to pass
+### Require build/lint/typecheck to pass
 
 ```ts
 export default {
-  scripts: ['build', 'lint'],  // must exit 0
+  // These run as `npm run build`, `npm run lint`, etc.
+  scripts: ['build', 'lint', 'typecheck'],
 }
 ```
 
-### Pass environment variables to the agent
-
-```ts
-export default {
-  env: {
-    DATABASE_URL: 'postgres://...',
-  },
-}
-```
-
-### Run all attempts (don't stop on first success)
+### Run all attempts (measure true pass rate)
 
 ```ts
 export default {
@@ -215,39 +293,39 @@ export default {
 
 ---
 
-## Where Does It Run?
-
-The framework picks automatically:
-
-| If you have... | It uses... |
-|----------------|------------|
-| `VERCEL_TOKEN` set | Vercel Sandbox (isolated VMs, runs in parallel) |
-| No token | Local sandbox (temp directory on your machine) |
-
-For production evals, use Vercel Sandbox. It's faster and isolated.
-
----
-
-## Environment Variables
-
-```bash
-# Required
-ANTHROPIC_API_KEY=your-anthropic-key
-
-# Optional (enables Vercel Sandbox)
-VERCEL_TOKEN=your-vercel-token
-```
-
----
-
 ## How Scoring Works
 
 An eval is **pass or fail**. No partial credit.
 
 To pass, ALL of these must succeed:
-1. Setup (if you defined one)
-2. All scripts in `scripts` array
+1. Setup function (if defined)
+2. All npm scripts in `scripts` array
 3. All vitest tests in EVAL.ts
+
+---
+
+## FAQ
+
+### Why is there no local sandbox option?
+
+Local sandbox would run agent code directly on your machine without isolation. This is dangerous because:
+
+1. **Security risk** — AI agents can execute arbitrary commands. Without isolation, a misbehaving agent could modify or delete files outside the eval directory.
+2. **Permission headaches** — Local execution requires careful permission management that varies by OS.
+3. **Non-reproducible results** — Local environment differences (installed packages, OS version, etc.) make results inconsistent.
+
+Vercel Sandbox provides isolated Firecracker MicroVMs that are ephemeral and auto-cleanup. This is the only supported execution environment.
+
+### How does the EVAL.ts import work?
+
+When you write `import { sandbox } from '@vercel/eval-framework'`, you don't need to install this package in your eval fixture. The framework:
+
+1. Copies your eval folder to the sandbox (excluding `PROMPT.md` and `EVAL.ts`)
+2. Runs the agent with your prompt
+3. Injects `EVAL.ts` into the sandbox
+4. Provides the `sandbox` global at runtime when vitest executes
+
+The import is resolved by the framework's test harness, not by your fixture's node_modules.
 
 ---
 
@@ -261,3 +339,6 @@ To pass, ALL of these must succeed:
 
 **"Setup keeps failing"**
 → Check that your fixture has a valid `package.json`
+
+**"Missing VERCEL_TOKEN"**
+→ Add `VERCEL_TOKEN` or `VERCEL_OIDC_TOKEN` to your `.env` file

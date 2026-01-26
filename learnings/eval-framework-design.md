@@ -49,8 +49,6 @@ Validation tests. Can import from the fixture since it runs after the agent:
 
 ```ts
 // evals/add-button/EVAL.ts
-export const scripts = ["build", "lint"]
-
 import { files, exec } from '@vercel/eval-framework'
 import { test, expect } from 'vitest'
 
@@ -71,12 +69,6 @@ test('app starts without errors', async () => {
   expect(health.exitCode).toBe(0)
 })
 ```
-
-### Exports
-
-| Export | Type | Description |
-|--------|------|-------------|
-| `scripts` | `string[]` | npm scripts that must exit 0 (optional, default: `[]`) |
 
 ### The `files` Object
 
@@ -116,26 +108,22 @@ Use standard vitest assertions. The framework doesn't abstract vitest—you get 
 
 1. Copy eval folder to sandbox (excluding `PROMPT.md`, `EVAL.ts`)
 2. Run `npm install`
-3. Run prehook (if defined in config). **If prehook fails, eval fails.**
+3. Run `setup` (if defined in config). **If setup fails, eval fails.**
 4. Run agent with contents of `PROMPT.md` (passed as CLI argument to claude-code)
 5. Populate `files` with output
 6. Inject `EVAL.ts` into project root
-7. Run `scripts` in order (if defined). **Stops on first failure.**
+7. Run `scripts` in order (if defined in config). **Stops on first failure.**
 8. Run `npx vitest run EVAL.ts`
 9. Result: **0 or 1**
 
-**Timeouts:** Agent has 10 minute timeout. Scripts have 2 minute timeout each.
-
-**Parallelism:** Evals run sequentially. Multiple runs of the same eval run sequentially.
-
-**Sandbox cleanup:** Sandbox is deleted after each run. For debugging, use `sandbox: 'local'` in config.
+**Concurrency:** All evals and runs execute concurrently (in vercel sandbox mode).
 
 ## Scoring
 
 An eval is binary: **pass (1) or fail (0)**. No partial scores.
 
 For an eval to pass:
-- Prehook must succeed (if defined)
+- Setup must succeed (if defined)
 - All `scripts` must exit 0
 - All vitest tests must pass
 
@@ -183,7 +171,8 @@ my-evals/
 export default {
   agent: 'claude-code',
   model: 'opus',
-  prehook: async (sandbox) => {
+  scripts: ['build', 'lint'],
+  setup: async (sandbox) => {
     await sandbox.exec('npx @vercel/next-skill install')
   },
   runs: 10,
@@ -195,13 +184,28 @@ export default {
 |-------|------|---------|-------------|
 | `agent` | `'claude-code'` | `'claude-code'` | Which agent to use |
 | `model` | `string` | `'sonnet'` | Model to use (e.g., `'opus'`, `'sonnet'`) |
-| `sandbox` | `'vercel' \| 'local' \| 'docker'` | `'vercel'` | Sandbox provider for isolated execution |
-| `prehook` | `(sandbox) => Promise<void>` | none | Setup before agent runs |
+| `env` | `Record<string, string>` | `{}` | Environment variables to pass to the agent |
+| `scripts` | `string[]` | `[]` | npm scripts that must exit 0 before tests run |
+| `setup` | `(sandbox) => Promise<void>` | none | Setup function that runs before agent starts |
 | `runs` | `number` | `1` | Number of runs per eval |
-| `bestOf` | `number` | none | Stop on first pass (mutually exclusive with `runs`) |
-| `evals` | `string[]` | all | Which evals to run (folder names) |
+| `earlyExit` | `boolean` | `true` | Stop after first passing run (set `false` to always run all) |
+| `evals` | `string \| string[] \| (name: string) => boolean` | all | Which evals to run |
 
-**`runs` vs `bestOf`:** Cannot specify both. If both specified, error.
+### The `evals` Field
+
+```ts
+// Run all evals (default)
+evals: undefined
+
+// Run single eval by exact name
+evals: 'add-button'
+
+// Run multiple evals by name
+evals: ['add-button', 'fix-auth']
+
+// Run evals matching a predicate
+evals: (name) => name.startsWith('auth-')
+```
 
 ### Minimal Config
 
@@ -210,7 +214,7 @@ export default {
 export default {}
 ```
 
-Uses all defaults: claude-code agent, sonnet model, vercel sandbox, 1 run, all evals.
+Uses all defaults: claude-code agent, sonnet model, 1 run, all evals.
 
 ### Full Config (with comments)
 
@@ -226,35 +230,43 @@ export default {
   // Default: 'sonnet'
   model: 'opus',
 
-  // Sandbox provider for isolated execution
-  // Options: 'vercel' | 'local' | 'docker'
-  // Default: 'vercel'
-  // - 'vercel': Firecracker MicroVMs via @vercel/sandbox (recommended)
-  // - 'local': Local filesystem (no isolation, use for debugging)
-  // - 'docker': Docker containers (requires Docker daemon)
-  sandbox: 'vercel',
+  // Environment variables passed to the agent
+  // Required vars depend on agent:
+  // - claude-code: ANTHROPIC_API_KEY (required)
+  // Default: {}
+  env: {
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+  },
+
+  // npm scripts to run after agent completes, before tests
+  // Stops on first failure
+  // Default: []
+  scripts: ['build', 'lint'],
 
   // Setup function that runs before agent starts
   // Receives sandbox instance for file/command operations
-  // If prehook throws, eval fails immediately
+  // If setup throws, eval fails immediately
   // Default: none
-  prehook: async (sandbox) => {
+  setup: async (sandbox) => {
     await sandbox.exec('npx @vercel/next-skill install')
   },
 
   // Number of times to run each eval
   // Results aggregated in summary.json
   // Default: 1
-  // Cannot be used with 'bestOf'
   runs: 10,
 
-  // Stop after first passing run
-  // Useful for "can this ever pass?" testing
-  // Cannot be used with 'runs'
-  // bestOf: 5,
+  // Stop running after first pass
+  // Set to false to always run all attempts
+  // Default: true
+  earlyExit: true,
 
-  // Which evals to run (folder names in evals/)
-  // Default: all evals found in evals/
+  // Which evals to run
+  // - undefined: all evals in evals/
+  // - string: exact match
+  // - string[]: list of exact matches
+  // - (name) => boolean: predicate function
+  // Default: all
   evals: ['add-button', 'fix-auth'],
 }
 ```
@@ -293,7 +305,7 @@ Small, scannable. Pointers to large files:
   "run": 1,
   "passed": false,
   "duration": 45200,
-  "prehook": { "passed": true, "duration": 1200 },
+  "setup": { "passed": true, "duration": 1200 },
   "scripts": {
     "build": { "passed": true, "duration": 12300, "output": "./outputs/build.txt" },
     "lint": { "passed": false, "duration": 2100, "output": "./outputs/lint.txt" }
@@ -314,7 +326,7 @@ Small, scannable. Pointers to large files:
 
 ### summary.json
 
-Aggregated stats across runs (only generated when `runs > 1` or `bestOf` is set):
+Aggregated stats across runs (always generated):
 
 ```json
 {
@@ -323,24 +335,16 @@ Aggregated stats across runs (only generated when `runs > 1` or `bestOf` is set)
   "passed": 7,
   "passRate": 0.7,
   "meanDuration": 45200,
-  "stddev": 8300
-}
-```
-
-For `bestOf`, also includes:
-
-```json
-{
-  "eval": "add-button",
-  "bestOf": 5,
-  "passed": true,
+  "stddev": 8300,
+  "earlyExit": true,
+  "stoppedEarly": true,
   "attemptsUntilPass": 3
 }
 ```
 
 ### transcript.jsonl
 
-Full agent output. Format depends on agent (JSONL for claude-code). Framework stores it as-is, doesn't parse it.
+Full agent output. Format depends on agent (JSONL for claude-code). Framework stores it as-is, doesn't parse it. Use this for debugging failed evals.
 
 ## Reporting
 
@@ -348,7 +352,10 @@ The framework outputs structured JSON. Users build their own reports, dashboards
 
 ## Sandbox
 
-Configured via the `sandbox` field in config. Default: `'vercel'`.
+The framework auto-detects sandbox provider based on available credentials:
+
+1. **Vercel token available** → uses `@vercel/sandbox` (logged: `Using vercel sandbox`)
+2. **No token** → uses local sandbox (logged: `Using local sandbox`)
 
 ```ts
 interface Sandbox {
@@ -358,15 +365,15 @@ interface Sandbox {
 }
 ```
 
-### Providers
+### Vercel Sandbox
 
-**`'vercel'` (default):** Firecracker MicroVMs via `@vercel/sandbox`. Hard isolation, ephemeral, auto-cleanup. Requires Vercel authentication (OIDC or access token).
+Firecracker MicroVMs via `@vercel/sandbox`. Hard isolation, ephemeral, auto-cleanup.
 
 - Runtime: Node.js 24 (Amazon Linux 2023)
 - Writable directory: `/vercel/sandbox`
 - Pre-installed: git, npm, pnpm, common build tools
-- Max timeout: 5 hours (Pro/Enterprise), 45 minutes (Hobby)
+- Requires: `VERCEL_TOKEN` environment variable
 
-**`'local'`:** Local filesystem. No isolation—runs in temp directory on host machine. Useful for debugging.
+### Local Sandbox
 
-**`'docker'`:** Docker containers. Requires Docker daemon running locally.
+Local filesystem. No isolation—runs in temp directory on host machine.

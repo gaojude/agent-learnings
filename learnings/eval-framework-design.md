@@ -45,38 +45,37 @@ Requirements:
 
 ### EVAL.ts
 
-Validation tests. Uses `defineEval` which provides the sandbox and files:
+Validation tests. The framework provides a global `sandbox` object:
 
 ```ts
 // evals/add-button/EVAL.ts
-import { defineEval } from '@vercel/eval-framework'
+import { sandbox } from '@vercel/eval-framework'
 import { test, expect } from 'vitest'
 
-export default defineEval((sandbox, files) => {
-  test('logout button exists somewhere in codebase', () => {
-    const hasLogout = Object.values(files).some(c => /logout/i.test(c))
-    expect(hasLogout).toBe(true)
-  })
+test('logout button exists somewhere in codebase', async () => {
+  const files = await sandbox.glob('**/*.tsx')
+  for (const file of files) {
+    const content = await sandbox.readFile(file)
+    if (/logout/i.test(content)) {
+      expect(true).toBe(true)
+      return
+    }
+  }
+  expect(false).toBe(true)
+})
 
-  test('logout button has click handler', () => {
-    const hasHandler = Object.values(files).some(c => /onClick.*logout/i.test(c))
-    expect(hasHandler).toBe(true)
-  })
+test('app builds successfully', async () => {
+  const result = await sandbox.exec('npm run build')
+  expect(result.exitCode).toBe(0)
+})
 
-  test('app starts without errors', async () => {
-    await sandbox.exec('npm run dev -- --port 3333 &')
-    await sandbox.exec('sleep 2')
-    const health = await sandbox.exec('curl -s http://localhost:3333')
-    expect(health.exitCode).toBe(0)
-  })
+test('app starts without errors', async () => {
+  await sandbox.exec('npm run dev -- --port 3333 &')
+  await sandbox.exec('sleep 2')
+  const health = await sandbox.exec('curl -s http://localhost:3333')
+  expect(health.exitCode).toBe(0)
 })
 ```
-
-**`files`:** A `Record<string, string>` mapping file paths to contents, populated after agent runs.
-
-- **Paths:** Relative to project root, no leading `./` (e.g., `src/App.tsx`)
-- **Excluded:** `node_modules/`, `.git/`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `EVAL.ts`
-- **Binary files:** Excluded. Only text files included.
 
 Use standard vitest assertions. The framework doesn't abstract vitest—you get full access to all its features.
 
@@ -86,11 +85,10 @@ Use standard vitest assertions. The framework doesn't abstract vitest—you get 
 2. Run `npm install`
 3. Run `setup` (if defined in config). **If setup fails, eval fails.**
 4. Run agent with contents of `PROMPT.md` (passed as CLI argument to claude-code)
-5. Populate `files` with output
-6. Inject `EVAL.ts` into project root
-7. Run `scripts` in order (if defined in config). **Stops on first failure.**
-8. Run `npx vitest run EVAL.ts`
-9. Result: **0 or 1**
+5. Inject `EVAL.ts` into project root
+6. Run `scripts` in order (if defined in config). **Stops on first failure.**
+7. Run `npx vitest run EVAL.ts`
+8. Result: **0 or 1**
 
 **Concurrency:** All evals and runs execute concurrently (in vercel sandbox mode).
 
@@ -338,10 +336,11 @@ interface Sandbox {
   exec(cmd: string): Promise<{ stdout: string; stderr: string; exitCode: number }>
   readFile(path: string): Promise<string>
   writeFile(path: string, content: string): Promise<void>
+  glob(pattern?: string): Promise<string[]>  // default: '**/*'
 }
 ```
 
-Same interface used in both `setup` and `defineEval`.
+Same interface used in both `setup` config and EVAL.ts.
 
 ### Vercel Sandbox
 

@@ -222,17 +222,17 @@ Add a greeting message below the heading that says "Welcome, user!"
 
 **evals/add-greeting/EVAL.ts**
 ```typescript
-import { sandbox } from '@vercel/eval-framework'
+import { readFileSync } from 'fs'
+import { execSync } from 'child_process'
 import { test, expect } from 'vitest'
 
-test('greeting message exists', async () => {
-  const content = await sandbox.readFile('src/App.tsx')
+test('greeting message exists', () => {
+  const content = readFileSync('src/App.tsx', 'utf-8')
   expect(content).toContain('Welcome, user!')
 })
 
-test('app still builds', async () => {
-  const result = await sandbox.exec('npm run build')
-  expect(result.exitCode, `Build failed: ${result.stderr}`).toBe(0)
+test('app still builds', () => {
+  execSync('npm run build', { stdio: 'pipe' })
 })
 ```
 
@@ -339,84 +339,68 @@ The agent does NOT see `PROMPT.md` or `EVAL.ts` as files in the sandbox—they'r
 
 ### Step 3: Write Your Tests (EVAL.ts)
 
-Create an `EVAL.ts` file that checks if the agent actually did the task correctly.
+Create an `EVAL.ts` file that checks if the agent actually did the task correctly. **EVAL.ts runs inside the sandbox**, so you use standard Node.js APIs—just like writing normal tests.
 
 ```typescript
-import { sandbox } from '@vercel/eval-framework'
+import { readFileSync, existsSync } from 'fs'
+import { execSync } from 'child_process'
 import { test, expect } from 'vitest'
 
 // Test 1: Check if the logout button exists somewhere in the code
-test('logout button exists in codebase', async () => {
-  const files = await sandbox.glob('**/*.tsx')
-  const filesWithLogout: string[] = []
-
-  for (const file of files) {
-    const content = await sandbox.readFile(file)
-    if (/logout/i.test(content)) {
-      filesWithLogout.push(file)
-    }
-  }
-
-  // Provide a helpful error message if the test fails
-  expect(
-    filesWithLogout.length,
-    `Expected 'logout' in at least one .tsx file. Searched ${files.length} files: ${files.join(', ')}`
-  ).toBeGreaterThan(0)
+test('logout button exists in codebase', () => {
+  const result = execSync('grep -r "logout" src/', { encoding: 'utf-8', stdio: 'pipe' })
+  expect(result).toContain('logout')
 })
 
-// Test 2: Make sure the app still builds (agent didn't break anything)
-test('app still builds', async () => {
-  const result = await sandbox.exec('npm run build')
+// Test 2: Make sure the app still builds
+test('app still builds', () => {
+  execSync('npm run build', { stdio: 'pipe' })  // Throws if build fails
+})
 
-  // Include build output in error message for easier debugging
-  expect(
-    result.exitCode,
-    `Build failed with exit code ${result.exitCode}.\nstderr: ${result.stderr}\nstdout: ${result.stdout}`
-  ).toBe(0)
+// Test 3: Check file contents directly
+test('App.tsx contains logout handler', () => {
+  const content = readFileSync('src/App.tsx', 'utf-8')
+  expect(content).toMatch(/onClick.*logout|logout.*onClick/i)
+})
+
+// Test 4: You can even import and test the actual code!
+test('App component renders', async () => {
+  const { App } = await import('./src/App')
+  // Use React Testing Library, etc.
 })
 ```
 
-**What is `sandbox`?**
+**Why `EVAL.ts` instead of `*.test.ts`?**
 
-The `sandbox` object is your interface to the isolated VM where the agent ran. It provides these methods:
+We use the special filename `EVAL.ts` to avoid conflicts. If your eval task is "write tests for this component," the agent will create `*.test.ts` files—those are the agent's *output*, not your verification tests.
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `sandbox.exec('command')` | `{ exitCode: number, stdout: string, stderr: string }` | Run a shell command |
-| `sandbox.readFile('path')` | `string` | Read file contents (throws if file doesn't exist) |
-| `sandbox.writeFile('path', 'content')` | `void` | Write or overwrite a file |
-| `sandbox.glob('pattern')` | `string[]` | Find files matching a glob pattern (`*` any chars, `**` recursive, `{a,b}` alternatives). Example: `**/*.{ts,tsx}` |
+**Available APIs (standard Node.js):**
 
-**Error handling:** File methods (`readFile`, `writeFile`) throw exceptions on failure. Wrap in try/catch if needed:
+| What you want | How to do it |
+|---------------|--------------|
+| Read a file | `readFileSync('src/App.tsx', 'utf-8')` |
+| Check if file exists | `existsSync('src/App.tsx')` |
+| Run shell command | `execSync('npm run build', { stdio: 'pipe' })` |
+| Search for pattern | `execSync('grep -r "pattern" src/', { encoding: 'utf-8' })` |
+| Import actual code | `await import('./src/App')` |
+
+**Error handling:**
 
 ```typescript
+// File operations - check existence or use try/catch
+if (existsSync('maybe-missing.txt')) {
+  const content = readFileSync('maybe-missing.txt', 'utf-8')
+}
+
+// Shell commands - execSync throws on non-zero exit code
 try {
-  const content = await sandbox.readFile('maybe-missing.txt')
-} catch (err) {
-  // File doesn't exist, handle gracefully
+  execSync('npm run build', { stdio: 'pipe' })
+} catch (err: any) {
+  throw new Error(`Build failed: ${err.stderr?.toString()}`)
 }
 ```
 
-**`sandbox.exec()` behavior:** Unlike file methods, `exec()` does NOT throw on non-zero exit codes. It always returns the result object—check `exitCode` yourself:
-
-```typescript
-const result = await sandbox.exec('npm run build')
-if (result.exitCode !== 0) {
-  console.error('Build failed:', result.stderr)
-}
-```
-
-**Important:** All sandbox methods are asynchronous. Always use `await`:
-
-```typescript
-// WRONG - test may pass incorrectly because you're not awaiting the result
-const content = sandbox.readFile('src/App.tsx')  // Returns Promise, not string!
-
-// CORRECT
-const content = await sandbox.readFile('src/App.tsx')
-```
-
-**File paths:** All paths are relative to the eval fixture root—the folder containing your `PROMPT.md` and `package.json`. For example, if your structure is:
+**File paths:** All paths are relative to the eval fixture root:
 
 ```
 evals/add-button/
@@ -425,9 +409,9 @@ evals/add-button/
 └── package.json
 ```
 
-Then use `sandbox.readFile('src/App.tsx')`, not `sandbox.readFile('App.tsx')` or an absolute path.
+Use `readFileSync('src/App.tsx', 'utf-8')`, not an absolute path.
 
-**Note:** You don't need to install `@vercel/eval-framework` or `vitest` in your eval folder. The framework provides both automatically when running tests.
+**Note:** The framework provides `vitest` automatically. You don't need to install it in your eval fixture.
 
 ---
 
@@ -582,14 +566,14 @@ export default {
   // Default: 300 (5 minutes)
   timeout: 600,
 
-  // Setup function that runs BEFORE the agent starts
+  // Setup function that runs BEFORE the agent starts (outside the sandbox)
   // Note: npm install runs automatically before setup() is called
-  // The `sandbox` parameter has the same API as in EVAL.ts:
-  // exec(), readFile(), writeFile(), glob()
-  // Use this for additional configuration beyond package.json
+  // The `sandbox` parameter uses @vercel/sandbox SDK:
+  // runCommand(), readFileToBuffer(), writeFiles(), etc.
+  // See: https://vercel.com/docs/vercel-sandbox/sdk-reference
   // Default: none
   setup: async (sandbox) => {
-    await sandbox.exec('npx skills add vercel/next-skill')
+    await sandbox.runCommand('npx', ['skills', 'add', 'vercel/next-skill'])
   },
 }
 ```
@@ -633,7 +617,7 @@ evals: (name) => name.startsWith('auth-')
 ```typescript
 export default {
   setup: async (sandbox) => {
-    await sandbox.exec('npx skills add vercel/next-skill')
+    await sandbox.runCommand('npx', ['skills', 'add', 'vercel/next-skill'])
   },
 }
 ```
@@ -671,23 +655,25 @@ export default {
 AI agents may solve tasks in unexpected but valid ways. Write tests that verify the *outcome*, not the specific implementation:
 
 ```typescript
+import { readFileSync } from 'fs'
+import { execSync } from 'child_process'
+
 // BAD: Tests specific implementation details
-test('logout button in header', async () => {
-  const header = await sandbox.readFile('src/components/Header.tsx')
+test('logout button in header', () => {
+  const header = readFileSync('src/components/Header.tsx', 'utf-8')
   expect(header).toContain('logout')  // Fails if agent puts it elsewhere!
 })
 
 // GOOD: Tests that the feature exists somewhere
-test('logout functionality exists', async () => {
-  const result = await sandbox.exec('grep -r "logout" src/')
-  expect(result.exitCode).toBe(0)  // grep returns 0 if pattern found
+test('logout functionality exists', () => {
+  // grep exits 0 if found, throws (exit 1) if not found
+  execSync('grep -r "logout" src/', { stdio: 'pipe' })
 })
 
 // BETTER: Tests actual behavior via e2e tests
-test('logout works end-to-end', async () => {
-  await sandbox.exec('npm run build')
-  const result = await sandbox.exec('npm run test:e2e -- --grep "logout"')
-  expect(result.exitCode).toBe(0)
+test('logout works end-to-end', () => {
+  execSync('npm run build', { stdio: 'pipe' })
+  execSync('npm run test:e2e -- --grep "logout"', { stdio: 'pipe' })
 })
 ```
 
@@ -705,9 +691,8 @@ Writing good evals is as important as writing good tests. Here's what makes an e
 
 **Include negative tests:** Verify the agent didn't break existing functionality:
 ```typescript
-test('existing tests still pass', async () => {
-  const result = await sandbox.exec('npm test')
-  expect(result.exitCode).toBe(0)
+test('existing tests still pass', () => {
+  execSync('npm test', { stdio: 'pipe' })
 })
 ```
 
@@ -765,16 +750,16 @@ The framework requires Vercel Sandbox (isolated virtual machines) for safety and
 
 3. **Simplicity** — No need to manage permissions or worry about cleanup.
 
-### How does the `import { sandbox }` work if I didn't install it?
+### How does EVAL.ts run?
 
-You don't need to install `@vercel/eval-framework` in your eval fixture. Here's what happens:
+EVAL.ts runs **inside the sandbox** after the agent completes. Here's the sequence:
 
 1. Framework copies your eval folder to the sandbox (excluding `PROMPT.md` and `EVAL.ts`)
 2. Agent runs and modifies the code
 3. Framework injects `EVAL.ts` into the sandbox
-4. Framework provides the `sandbox` object automatically when vitest runs
+4. Framework runs `vitest` inside the sandbox to execute your tests
 
-The import is resolved by the framework's test harness, not by your node_modules.
+Since EVAL.ts runs inside the sandbox, you use standard Node.js APIs (`fs`, `child_process`, dynamic `import()`, etc.)—just like writing normal tests. No special imports needed.
 
 ### How much does running evals cost?
 
@@ -898,8 +883,8 @@ Error: Cannot read properties of undefined (reading 'includes')
 **Cause:** Your test code threw an exception—often from accessing properties on undefined values.
 **Fix:** Common causes:
 - Forgetting to `await` an async function (variable is a Promise, not the result)
-- Assuming a file exists when it doesn't—use try/catch around `sandbox.readFile()`
-- Parsing command output without checking `exitCode` first
+- Assuming a file exists when it doesn't—use `existsSync()` or try/catch around `readFileSync()`
+- Parsing command output without checking if `execSync()` threw an error
 
 ### Debug Checklist
 

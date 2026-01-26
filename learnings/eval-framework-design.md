@@ -1,39 +1,52 @@
-# @vercel/eval-framework
+# How to Use @vercel/eval-framework
 
-**Author:** judegao
 **Date:** 2026-01-26
 
-## Introduction
+Test whether an AI coding agent can complete real tasks in your codebase.
 
-`@vercel/eval-framework` is an opinionated evaluation framework for testing AI coding agents on Node.js projects.
+---
 
-**Assumptions:** npm, vitest, claude-code CLI
+## Quick Start (5 steps)
 
-## Project Structure
+```bash
+# 1. Create a new eval project
+npx eval init
+
+# 2. Set your API key
+export ANTHROPIC_API_KEY=your-key
+
+# 3. Run the example eval
+npx eval configs/default.ts
+```
+
+That's it. You now have results in `results/default/`.
+
+---
+
+## What You're Building
+
+An "eval" is just a test for an AI agent. You give it:
+- A **task** (written in markdown)
+- A **way to check** if it succeeded (written in vitest)
 
 ```
 my-evals/
 ├── evals/
-│   └── add-button/           # This folder IS the fixture
-│       ├── src/
-│       │   └── App.tsx
+│   └── add-button/        # Your eval (a normal Node.js project)
+│       ├── src/App.tsx    # Starting code the agent will modify
 │       ├── package.json
-│       ├── PROMPT.md         # What to ask the agent
-│       └── EVAL.ts           # How to validate (hidden from agent)
+│       ├── PROMPT.md      # "Add a logout button to the header"
+│       └── EVAL.ts        # Tests to verify the agent did it right
 ├── configs/
-│   └── with-skill.ts
-└── results/
+│   └── default.ts         # Which evals to run, how many times
+└── results/               # Results appear here
 ```
 
-The eval folder **is** the fixture—a normal Node.js project. Two special files:
-- `PROMPT.md` — the prompt sent to the agent (static markdown)
-- `EVAL.ts` — validation tests (agent never sees this, can import from fixture)
+---
 
-## Writing Evals
+## Step 1: Write Your Task
 
-### PROMPT.md
-
-The prompt for the agent. Just markdown:
+Create `PROMPT.md` with instructions for the agent:
 
 ```md
 Add a logout button to the header.
@@ -43,16 +56,19 @@ Requirements:
 - Clicking it should clear the session and redirect to /login
 ```
 
-### EVAL.ts
+Write it like you'd write for a junior developer. Be specific about what you want.
 
-Validation tests. The framework provides a global `sandbox` object:
+---
+
+## Step 2: Write Your Tests
+
+Create `EVAL.ts` to check if the agent succeeded:
 
 ```ts
-// evals/add-button/EVAL.ts
 import { sandbox } from '@vercel/eval-framework'
 import { test, expect } from 'vitest'
 
-test('logout button exists somewhere in codebase', async () => {
+test('logout button exists in codebase', async () => {
   const files = await sandbox.glob('**/*.tsx')
   for (const file of files) {
     const content = await sandbox.readFile(file)
@@ -61,246 +77,88 @@ test('logout button exists somewhere in codebase', async () => {
       return
     }
   }
-  expect(false).toBe(true)
+  expect.fail('No logout button found')
 })
 
-test('app builds successfully', async () => {
+test('app still builds', async () => {
   const result = await sandbox.exec('npm run build')
   expect(result.exitCode).toBe(0)
 })
-
-test('app starts without errors', async () => {
-  await sandbox.exec('npm run dev -- --port 3333 &')
-  await sandbox.exec('sleep 2')
-  const health = await sandbox.exec('curl -s http://localhost:3333')
-  expect(health.exitCode).toBe(0)
-})
 ```
 
-Use standard vitest assertions. The framework doesn't abstract vitest—you get full access to all its features.
+The `sandbox` object lets you:
+- `sandbox.exec('command')` — run shell commands
+- `sandbox.readFile('path')` — read files
+- `sandbox.writeFile('path', 'content')` — write files
+- `sandbox.glob('**/*.tsx')` — find files
 
-## Execution Flow
+---
 
-1. Copy eval folder to sandbox (excluding `PROMPT.md`, `EVAL.ts`)
-2. Run `npm install`
-3. Run `setup` (if defined in config). **If setup fails, eval fails.**
-4. Run agent with contents of `PROMPT.md` (passed as CLI argument to claude-code)
-5. Inject `EVAL.ts` into project root
-6. Run `scripts` in order (if defined in config). **Stops on first failure.**
-7. Run `npx vitest run EVAL.ts`
-8. Result: **0 or 1**
+## Step 3: Create a Config
 
-**Concurrency:** All evals and runs execute concurrently (in vercel sandbox mode).
-
-## Scoring
-
-An eval is binary: **pass (1) or fail (0)**. No partial scores.
-
-For an eval to pass:
-- Setup must succeed (if defined)
-- All `scripts` must exit 0
-- All vitest tests must pass
-
-## CLI
-
-```bash
-npx eval <config>
-```
-
-That's it. Config file defines everything.
-
-```bash
-npx eval configs/with-skill.ts
-npx eval configs/baseline.ts
-```
-
-### Scaffolding
-
-Create a new eval project with example files:
-
-```bash
-npx eval init
-```
-
-Creates:
-
-```
-my-evals/
-├── evals/
-│   └── hello-world/
-│       ├── src/
-│       │   └── index.ts
-│       ├── package.json
-│       ├── PROMPT.md
-│       └── EVAL.ts
-├── configs/
-│   └── default.ts
-└── package.json
-```
-
-## Configs
+Create `configs/my-test.ts`:
 
 ```ts
-// configs/with-skill.ts
 export default {
-  agent: 'claude-code',
-  model: 'opus',
-  scripts: ['build', 'lint'],
-  setup: async (sandbox) => {
-    await sandbox.exec('npx @vercel/next-skill install')
-  },
-  runs: 10,
-  evals: ['add-button', 'fix-auth'],
+  evals: ['add-button'],  // which evals to run
+  runs: 5,                // run each eval 5 times
+  model: 'sonnet',        // which Claude model to use
 }
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `agent` | `'claude-code'` | `'claude-code'` | Which agent to use |
-| `model` | `string` | `'sonnet'` | Model to use (e.g., `'opus'`, `'sonnet'`) |
-| `env` | `Record<string, string>` | `{}` | Environment variables to pass to the agent |
-| `scripts` | `string[]` | `[]` | npm scripts that must exit 0 before tests run |
-| `setup` | `(sandbox) => Promise<void>` | none | Setup function that runs before agent starts |
-| `runs` | `number` | `1` | Number of runs per eval |
-| `earlyExit` | `boolean` | `true` | Stop after first passing run (set `false` to always run all) |
-| `evals` | `string \| string[] \| (name: string) => boolean` | all | Which evals to run |
+### Config Options
 
-### The `evals` Field
+| Option | What it does | Default |
+|--------|--------------|---------|
+| `evals` | Which evals to run | all evals |
+| `runs` | How many times to run each eval | 1 |
+| `model` | Claude model (`'sonnet'`, `'opus'`) | `'sonnet'` |
+| `scripts` | npm scripts that must pass (e.g., `['build', 'lint']`) | none |
+| `setup` | Code to run before the agent starts | none |
+| `earlyExit` | Stop after first success? | `true` |
+
+### Selecting Evals
 
 ```ts
-// Run all evals (default)
+// Run all evals
 evals: undefined
 
-// Run single eval by exact name
+// Run one eval
 evals: 'add-button'
 
-// Run multiple evals by name
+// Run specific evals
 evals: ['add-button', 'fix-auth']
 
-// Run evals matching a predicate
+// Run evals matching a pattern
 evals: (name) => name.startsWith('auth-')
 ```
 
-### Minimal Config
+---
 
-```ts
-// configs/baseline.ts
-export default {}
+## Step 4: Run It
+
+```bash
+npx eval configs/my-test.ts
 ```
 
-Uses all defaults: claude-code agent, sonnet model, 1 run, all evals.
+---
 
-### Full Config (with comments)
+## Step 5: Check Results
 
-```ts
-// configs/example.ts
-export default {
-  // Which agent to use for running evals
-  // Options: 'claude-code'
-  // Default: 'claude-code'
-  agent: 'claude-code',
-
-  // Model to pass to the agent
-  // Default: 'sonnet'
-  model: 'opus',
-
-  // Environment variables passed to the agent
-  // Required vars depend on agent:
-  // - claude-code: ANTHROPIC_API_KEY (required)
-  // Default: {}
-  env: {
-    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-  },
-
-  // npm scripts to run after agent completes, before tests
-  // Stops on first failure
-  // Default: []
-  scripts: ['build', 'lint'],
-
-  // Setup function that runs before agent starts
-  // Receives sandbox instance for file/command operations
-  // If setup throws, eval fails immediately
-  // Default: none
-  setup: async (sandbox) => {
-    await sandbox.exec('npx @vercel/next-skill install')
-  },
-
-  // Number of times to run each eval
-  // Results aggregated in summary.json
-  // Default: 1
-  runs: 10,
-
-  // Stop running after first pass
-  // Set to false to always run all attempts
-  // Default: true
-  earlyExit: true,
-
-  // Which evals to run
-  // - undefined: all evals in evals/
-  // - string: exact match
-  // - string[]: list of exact matches
-  // - (name) => boolean: predicate function
-  // Default: all
-  evals: ['add-button', 'fix-auth'],
-}
-```
-
-## Results
-
-Each config run produces results in `results/<config-name>/<timestamp>/`:
-
-- **Config name:** Derived from filename without extension (e.g., `with-skill.ts` → `with-skill`)
-- **Timestamp:** ISO8601 format, UTC, colons replaced with dashes (e.g., `2026-01-26T12-00-00Z`)
+Results appear in `results/<config-name>/<timestamp>/`:
 
 ```
-results/with-skill/2026-01-26T12-00-00Z/
+results/my-test/2026-01-26T12-00-00Z/
 ├── add-button/
 │   ├── run-1/
-│   │   ├── result.json
-│   │   ├── transcript.jsonl
-│   │   └── outputs/
-│   │       ├── build.txt
-│   │       ├── lint.txt
-│   │       └── tests.txt
+│   │   ├── result.json      # Did it pass? How long?
+│   │   ├── transcript.jsonl # Full agent conversation
+│   │   └── outputs/         # Build logs, test output
 │   ├── run-2/
-│   │   └── ...
-│   └── summary.json
-└── fix-auth/
-    └── ...
+│   └── summary.json         # "7 out of 10 runs passed"
 ```
 
-### result.json
-
-Small, scannable. Pointers to large files:
-
-```json
-{
-  "eval": "add-button",
-  "run": 1,
-  "passed": false,
-  "duration": 45200,
-  "setup": { "passed": true, "duration": 1200 },
-  "scripts": {
-    "build": { "passed": true, "duration": 12300, "output": "./outputs/build.txt" },
-    "lint": { "passed": false, "duration": 2100, "output": "./outputs/lint.txt" }
-  },
-  "tests": {
-    "passed": false,
-    "failures": ["logout button exists"],
-    "output": "./outputs/tests.txt"
-  },
-  "transcript": "./transcript.jsonl",
-  "config": {
-    "agent": "claude-code",
-    "model": "opus"
-  },
-  "timestamp": "2026-01-26T12:00:00Z"
-}
-```
-
-### summary.json
-
-Aggregated stats across runs (always generated):
+### Understanding summary.json
 
 ```json
 {
@@ -308,64 +166,98 @@ Aggregated stats across runs (always generated):
   "runs": 10,
   "passed": 7,
   "passRate": 0.7,
-  "meanDuration": 45200,
-  "stddev": 8300,
-  "earlyExit": true,
-  "stoppedEarly": true,
-  "attemptsUntilPass": 3
+  "meanDuration": 45200
 }
 ```
 
-### transcript.jsonl
+**Pass rate of 0.7 = the agent succeeds 70% of the time.**
 
-Full agent output. Format depends on agent (JSONL for claude-code). Framework stores it as-is, doesn't parse it. Use this for debugging failed evals.
+---
 
-## Reporting
+## Common Patterns
 
-The framework outputs structured JSON. Users build their own reports, dashboards, or analysis scripts from the results.
-
-## Sandbox
-
-The framework auto-detects sandbox provider based on available credentials:
-
-1. **Vercel token available** → uses `@vercel/sandbox` (logged: `Using vercel sandbox`)
-2. **No token** → uses local sandbox (logged: `Using local sandbox`)
+### Run setup before the agent starts
 
 ```ts
-interface Sandbox {
-  exec(cmd: string): Promise<{ stdout: string; stderr: string; exitCode: number }>
-  readFile(path: string): Promise<string>
-  writeFile(path: string, content: string): Promise<void>
-  glob(pattern?: string): Promise<string[]>  // default: '**/*'
+export default {
+  setup: async (sandbox) => {
+    await sandbox.exec('npm install some-package')
+  },
 }
 ```
 
-Same interface used in both `setup` config and EVAL.ts.
+### Require build/lint to pass
 
-### Vercel Sandbox
+```ts
+export default {
+  scripts: ['build', 'lint'],  // must exit 0
+}
+```
 
-Firecracker MicroVMs via `@vercel/sandbox`. Hard isolation, ephemeral, auto-cleanup.
+### Pass environment variables to the agent
 
-- Runtime: Node.js 24 (Amazon Linux 2023)
-- Writable directory: `/vercel/sandbox`
-- Pre-installed: git, npm, pnpm, common build tools
-- Requires: `VERCEL_TOKEN` environment variable
+```ts
+export default {
+  env: {
+    DATABASE_URL: 'postgres://...',
+  },
+}
+```
 
-### Local Sandbox
+### Run all attempts (don't stop on first success)
 
-Local filesystem. No isolation—runs in temp directory on host machine.
+```ts
+export default {
+  runs: 10,
+  earlyExit: false,  // run all 10 even if some pass
+}
+```
+
+---
+
+## Where Does It Run?
+
+The framework picks automatically:
+
+| If you have... | It uses... |
+|----------------|------------|
+| `VERCEL_TOKEN` set | Vercel Sandbox (isolated VMs, runs in parallel) |
+| No token | Local sandbox (temp directory on your machine) |
+
+For production evals, use Vercel Sandbox. It's faster and isolated.
+
+---
 
 ## Environment Variables
 
 ```bash
-# .env.example
+# Required
+ANTHROPIC_API_KEY=your-anthropic-key
 
-# Vercel Sandbox (optional)
-# If set, uses Vercel's isolated MicroVMs
-# If not set, falls back to local sandbox
-VERCEL_TOKEN=
-
-# Claude Code agent (required)
-# API key for Anthropic's Claude API
-ANTHROPIC_API_KEY=
+# Optional (enables Vercel Sandbox)
+VERCEL_TOKEN=your-vercel-token
 ```
+
+---
+
+## How Scoring Works
+
+An eval is **pass or fail**. No partial credit.
+
+To pass, ALL of these must succeed:
+1. Setup (if you defined one)
+2. All scripts in `scripts` array
+3. All vitest tests in EVAL.ts
+
+---
+
+## Troubleshooting
+
+**"Why did my eval fail?"**
+→ Check `transcript.jsonl` to see what the agent did
+
+**"The agent succeeded but tests failed"**
+→ Check `outputs/tests.txt` for test errors
+
+**"Setup keeps failing"**
+→ Check that your fixture has a valid `package.json`

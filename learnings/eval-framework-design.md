@@ -129,7 +129,7 @@ Create `experiments/my-experiment.ts`:
 ```ts
 export default {
   agent: 'claude-code',     // which agent to use (required concept)
-  model: 'sonnet',          // model is secondary to agent choice
+  model: 'opus',            // model is secondary to agent choice
   evals: ['add-button'],    // which evals to run
   runs: 5,                  // run each eval 5 times
 }
@@ -186,8 +186,8 @@ export default {
 
   // MODEL (secondary to agent)
   // Model to pass to the agent
-  // Options depend on agent. For claude-code: 'sonnet', 'opus', 'haiku'
-  // Default: 'sonnet'
+  // Options depend on agent. For claude-code: 'opus', 'sonnet', 'haiku'
+  // Default: 'opus'
   model: 'opus',
 
   // EVALS
@@ -225,7 +225,7 @@ export default {
   // Default: none
   setup: async (sandbox) => {
     // Example: Install a skill before the agent runs
-    await sandbox.exec('chmod +x ./skills.sh && ./skills.sh')
+    await sandbox.exec('npx skills add vercel/next-skill')
   },
 }
 ```
@@ -235,7 +235,7 @@ export default {
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `agent` | `'claude-code'` | `'claude-code'` | Which agent CLI to use |
-| `model` | `string` | `'sonnet'` | Model for the agent (`'opus'`, `'sonnet'`, `'haiku'`) |
+| `model` | `string` | `'opus'` | Model for the agent (`'opus'`, `'sonnet'`, `'haiku'`) |
 | `evals` | `string \| string[] \| (name) => boolean` | all | Which evals to run |
 | `runs` | `number` | `1` | Number of runs per eval |
 | `earlyExit` | `boolean` | `true` | Stop after first success |
@@ -267,8 +267,7 @@ evals: (name) => name.startsWith('auth-')
 ```ts
 export default {
   setup: async (sandbox) => {
-    // Run your skills installation script
-    await sandbox.exec('chmod +x ./skills.sh && ./skills.sh')
+    await sandbox.exec('npx skills add vercel/next-skill')
   },
 }
 ```

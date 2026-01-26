@@ -7,7 +7,7 @@
 
 `@vercel/eval-framework` is an opinionated evaluation framework for testing AI coding agents on Node.js projects.
 
-**Assumptions:** npm, vitest
+**Assumptions:** npm, vitest, claude-code CLI
 
 ## Project Structure
 
@@ -18,19 +18,37 @@ my-evals/
 │       ├── src/
 │       │   └── App.tsx
 │       ├── package.json
-│       └── __eval__.ts       # Hidden from agent, injected after
+│       ├── PROMPT.md         # What to ask the agent
+│       └── EVAL.ts           # How to validate (hidden from agent)
+├── configs/                  # Optional run configurations
+│   └── with-skill.ts
 └── results/
 ```
 
-The eval folder **is** the fixture—a normal Node.js project. The only special file is `__eval__.ts`, which contains the prompt and assertions. The agent never sees this file.
+The eval folder **is** the fixture—a normal Node.js project. Two special files:
+- `PROMPT.md` — the prompt sent to the agent
+- `EVAL.ts` — validation tests (agent never sees this)
 
 ## Writing Evals
 
-Create a folder with your starting code and add `__eval__.ts`:
+### PROMPT.md
+
+The prompt for the agent. Just markdown:
+
+```md
+Add a logout button to the header.
+
+Requirements:
+- Button should be in the top right
+- Clicking it should clear the session and redirect to /login
+```
+
+### EVAL.ts
+
+Validation tests. Can import from the fixture since it runs after the agent:
 
 ```ts
-// evals/add-button/__eval__.ts
-export const prompt = "Add a logout button to the header"
+// evals/add-button/EVAL.ts
 export const scripts = ["build", "lint"]
 
 import { files } from '@vercel/eval-framework'
@@ -53,12 +71,11 @@ describe('logout button', () => {
 
 | Export | Type | Description |
 |--------|------|-------------|
-| `prompt` | `string` | What to ask the agent |
 | `scripts` | `string[]` | npm scripts that must exit 0 (optional) |
 
 ### The `files` Object
 
-The framework provides `files`—a `Record<string, string>` mapping file paths to contents. This is populated with the agent's output (excluding `node_modules`, `.git`, lockfiles, etc.) before tests run.
+The framework provides `files`—a `Record<string, string>` mapping file paths to contents. Populated with the agent's output (excluding `node_modules`, `.git`, lockfiles, etc.) before tests run.
 
 ```ts
 import { files } from '@vercel/eval-framework'
@@ -72,11 +89,11 @@ Use standard vitest assertions. The framework doesn't abstract vitest—you get 
 
 ## Execution Flow
 
-1. Copy eval folder to sandbox (excluding `__eval__.ts`)
+1. Copy eval folder to sandbox (excluding `PROMPT.md`, `EVAL.ts`)
 2. Run `npm install`
-3. Run agent with `prompt`
+3. Run agent with contents of `PROMPT.md`
 4. Populate `files` with output
-5. Inject `__eval__.ts`
+5. Inject `EVAL.ts`
 6. Run vitest
 7. Run `scripts` (if defined)
 8. Result: **0 or 1**
@@ -89,42 +106,58 @@ For an eval to pass:
 - All vitest tests must pass
 - All `scripts` must exit 0
 
-## Defining Agents
+## CLI
 
-An agent is just a function. Define it anywhere you want:
+The framework ships with a built-in claude-code agent:
+
+```bash
+# Single run (uses claude-code by default)
+npx eval
+
+# Run specific eval
+npx eval add-button
+
+# Best of N (stop on first pass)
+npx eval --best-of 5
+
+# Flakiness testing (run all, report stats)
+npx eval --runs 10
+
+# With options
+npx eval --model opus --runs 10
+```
+
+## Configs
+
+For reusable setups, create a config file:
 
 ```ts
-// my-agent.ts
-import type { Agent } from '@vercel/eval-framework'
-
-export const claude: Agent = async (prompt, sandbox) => {
-  await sandbox.exec('npm i -g @anthropic-ai/claude-code')
-  await sandbox.exec(`claude --print -p "${prompt}"`)
-
-  const transcript = await sandbox.readFile('~/.claude/.../transcript.jsonl')
-  return JSON.parse(transcript)
+// configs/with-skill.ts
+export default {
+  model: 'opus',
+  skills: ['@vercel/next-skill'],
+  runs: 10,
 }
 ```
 
-The transcript is stored for later investigation. When an eval fails, analyze it to understand what the agent did and where it went wrong.
-
-## CLI
-
 ```bash
-# Single run
-npx eval my-agent.ts
+npx eval --config configs/with-skill.ts
+```
 
-# Run specific eval
-npx eval my-agent.ts add-button
+### Custom Agent
 
-# Best of N (stop on first pass)
-npx eval my-agent.ts --best-of 5
+For non-claude-code agents, define a custom agent in the config:
 
-# Flakiness testing (run all, report stats)
-npx eval my-agent.ts --runs 10
-
-# Compare agents
-npx eval agent-a.ts agent-b.ts --runs 10
+```ts
+// configs/custom.ts
+export default {
+  agent: async (prompt, sandbox) => {
+    // your agent logic
+    await sandbox.exec(`my-agent "${prompt}"`)
+    return { transcript: [...] }
+  },
+  runs: 10,
+}
 ```
 
 ## CLI Output
@@ -132,7 +165,7 @@ npx eval agent-a.ts agent-b.ts --runs 10
 ### Single Run
 
 ```
-npx eval my-agent.ts add-button
+npx eval add-button
 
 add-button ✓ PASS (45.2s)
 ```
@@ -140,7 +173,7 @@ add-button ✓ PASS (45.2s)
 ### Flakiness Report
 
 ```
-npx eval my-agent.ts --runs 10
+npx eval --runs 10
 
 add-button (10 runs)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -149,18 +182,18 @@ Mean:       45.2s
 Stddev:     8.3s
 ```
 
-### Agent Comparison
+### Config Comparison
 
 ```
-npx eval agent-a.ts agent-b.ts --runs 10
+npx eval --config a.ts --config b.ts --runs 10
 
 add-button (10 runs each)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            agent-a     agent-b
+            config-a    config-b
 Pass rate   4/10        9/10
 Mean        48.2s       41.3s
 
-Winner: agent-b (90%)
+Winner: config-b (90%)
 ```
 
 ## Results
@@ -182,7 +215,8 @@ Each run produces a result file:
   },
   "transcript": [...],
   "metadata": {
-    "agent": "my-agent.ts",
+    "config": "with-skill.ts",
+    "model": "opus",
     "timestamp": "2026-01-26T12:00:00Z"
   }
 }

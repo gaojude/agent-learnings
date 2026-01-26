@@ -113,7 +113,8 @@ Here's what happens when you run an eval:
 
 ```bash
 # 1. Create a new eval project
-npx eval init
+npx eval init my-evals
+cd my-evals
 
 # 2. Run the example eval
 npx eval experiments/default.ts
@@ -199,6 +200,68 @@ rm -rf node_modules
 npm install && npm run build
 ```
 
+### Complete Example: Your First Eval
+
+Here's a complete, working eval you can copy to get started:
+
+**evals/add-greeting/src/App.tsx**
+```tsx
+export function App() {
+  return (
+    <div>
+      <h1>Hello World</h1>
+    </div>
+  )
+}
+```
+
+**evals/add-greeting/PROMPT.md**
+```markdown
+Add a greeting message below the heading that says "Welcome, user!"
+```
+
+**evals/add-greeting/EVAL.ts**
+```typescript
+import { sandbox } from '@vercel/eval-framework'
+import { test, expect } from 'vitest'
+
+test('greeting message exists', async () => {
+  const content = await sandbox.readFile('src/App.tsx')
+  expect(content).toContain('Welcome, user!')
+})
+
+test('app still builds', async () => {
+  const result = await sandbox.exec('npm run build')
+  expect(result.exitCode, `Build failed: ${result.stderr}`).toBe(0)
+})
+```
+
+**evals/add-greeting/package.json**
+```json
+{
+  "name": "add-greeting",
+  "type": "module",
+  "scripts": { "build": "tsc" },
+  "dependencies": { "react": "^18.0.0" },
+  "devDependencies": { "typescript": "^5.0.0", "@types/react": "^18.0.0" }
+}
+```
+
+**evals/add-greeting/tsconfig.json**
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}
+```
+
 ---
 
 ## Step-by-Step Guide
@@ -246,6 +309,8 @@ Requirements:
 - Write it like you would for a junior developer
 - Include acceptance criteria when possible
 - If something matters (like file location), say it explicitly
+- Keep prompts concise—typically 5-20 lines. Very long prompts consume tokens and may dilute key instructions
+- If you need extensive context (e.g., API docs), put it in a separate file and reference it: "See API_DOCS.md for specifications"
 
 **What the agent sees:**
 
@@ -254,6 +319,19 @@ When the eval starts, the agent receives:
 2. Access to all files in your eval folder (except `PROMPT.md` and `EVAL.ts`)
 
 The agent does NOT see `PROMPT.md` or `EVAL.ts` as files in the sandbox—they're excluded. The agent can explore the codebase using file reading and shell commands, just like a human developer would. It does NOT automatically see all file contents—it must choose to read them.
+
+**What the agent can do:**
+- Read and write files anywhere in the eval fixture
+- Run shell commands (bash)
+- Run npm scripts defined in package.json
+- Install npm packages (via `npm install package-name`)
+
+**What the agent cannot do:**
+- Access the internet (external network requests fail)
+- Access files outside the eval fixture directory
+- Read environment variables from your local `.env` (sandbox is isolated)
+- Persist data between runs (each run starts fresh)
+- Connect to external databases or APIs
 
 **Tip:** If certain files are critical context, mention them in your prompt: "See `src/App.tsx` for the current implementation."
 
@@ -307,15 +385,24 @@ The `sandbox` object is your interface to the isolated VM where the agent ran. I
 | `sandbox.exec('command')` | `{ exitCode: number, stdout: string, stderr: string }` | Run a shell command |
 | `sandbox.readFile('path')` | `string` | Read file contents (throws if file doesn't exist) |
 | `sandbox.writeFile('path', 'content')` | `void` | Write or overwrite a file |
-| `sandbox.glob('pattern')` | `string[]` | Find files matching a glob pattern |
+| `sandbox.glob('pattern')` | `string[]` | Find files matching a glob pattern (`*` any chars, `**` recursive, `{a,b}` alternatives). Example: `**/*.{ts,tsx}` |
 
-**Error handling:** These methods throw exceptions on failure. Wrap in try/catch if you need to handle errors gracefully:
+**Error handling:** File methods (`readFile`, `writeFile`) throw exceptions on failure. Wrap in try/catch if needed:
 
 ```typescript
 try {
   const content = await sandbox.readFile('maybe-missing.txt')
 } catch (err) {
   // File doesn't exist, handle gracefully
+}
+```
+
+**`sandbox.exec()` behavior:** Unlike file methods, `exec()` does NOT throw on non-zero exit codes. It always returns the result object—check `exitCode` yourself:
+
+```typescript
+const result = await sandbox.exec('npm run build')
+if (result.exitCode !== 0) {
+  console.error('Build failed:', result.stderr)
 }
 ```
 
@@ -329,7 +416,18 @@ const content = sandbox.readFile('src/App.tsx')  // Returns Promise, not string!
 const content = await sandbox.readFile('src/App.tsx')
 ```
 
-**Note:** You don't need to install `@vercel/eval-framework` in your eval folder. The framework provides it automatically when running tests.
+**File paths:** All paths are relative to the eval fixture root—the folder containing your `PROMPT.md` and `package.json`. For example, if your structure is:
+
+```
+evals/add-button/
+├── src/App.tsx
+├── PROMPT.md
+└── package.json
+```
+
+Then use `sandbox.readFile('src/App.tsx')`, not `sandbox.readFile('App.tsx')` or an absolute path.
+
+**Note:** You don't need to install `@vercel/eval-framework` or `vitest` in your eval folder. The framework provides both automatically when running tests.
 
 ---
 
@@ -365,6 +463,8 @@ The framework will:
 4. Let the agent work
 5. Run your tests
 6. Record the results
+
+**When does the agent finish?** The agent decides when it's done—it signals completion after it believes the task is complete. There's no explicit "done" signal you need to add to your prompt; the agent determines completion autonomously. If the agent exceeds the `timeout`, the run fails.
 
 ---
 
@@ -419,6 +519,15 @@ The `transcript.jsonl` shows the agent's conversation (one JSON object per line)
 {"role": "assistant", "content": "Done! I've added the logout button."}
 ```
 
+| Field | Description |
+|-------|-------------|
+| `role` | `"user"`, `"assistant"`, or `"tool"` |
+| `content` | The message text (for user/assistant) |
+| `name` | Tool name when `role` is `"tool"` (e.g., `"write_file"`, `"bash"`) |
+| `input` | Tool input parameters when `role` is `"tool"` |
+
+**Tip:** Use `jq` to filter transcripts: `cat transcript.jsonl | jq 'select(.role == "tool")'` shows only tool calls.
+
 **Common failure patterns:**
 
 | Symptom | Likely Cause | How to Fix |
@@ -440,8 +549,10 @@ export default {
   // Currently only 'claude-code' is supported
   agent: 'claude-code',
 
-  // Which AI model the agent should use
-  // Options: 'opus' (most capable), 'sonnet' (balanced), 'haiku' (fastest)
+  // Which AI model the agent should use (Claude model tiers)
+  // - 'opus': Most capable, best for complex tasks, highest cost
+  // - 'sonnet': Balanced capability and cost
+  // - 'haiku': Fastest and cheapest, good for simple tasks
   // Default: 'opus'
   model: 'opus',
 
@@ -472,12 +583,12 @@ export default {
   timeout: 600,
 
   // Setup function that runs BEFORE the agent starts
+  // Note: npm install runs automatically before setup() is called
   // The `sandbox` parameter has the same API as in EVAL.ts:
   // exec(), readFile(), writeFile(), glob()
-  // Use this to install dependencies, configure environment, etc.
+  // Use this for additional configuration beyond package.json
   // Default: none
   setup: async (sandbox) => {
-    await sandbox.exec('npm install')
     await sandbox.exec('npx skills add vercel/next-skill')
   },
 }
@@ -500,6 +611,7 @@ export default {
 
 ```typescript
 // Run ALL evals in the evals/ folder
+// (scans top-level directories only; ignores hidden folders like .git)
 evals: undefined
 
 // Run a single eval
@@ -526,6 +638,8 @@ export default {
 }
 ```
 
+**What are skills?** Skills are pre-built capabilities that extend what the agent can do. For example, `vercel/next-skill` teaches the agent Next.js-specific patterns and best practices. Skills are optional—the agent works without them, but adding relevant skills can improve success rates for domain-specific tasks.
+
 ### Pattern: Require code quality checks to pass
 
 ```typescript
@@ -534,6 +648,13 @@ export default {
   // If any fail, the eval fails
   scripts: ['build', 'lint', 'typecheck'],
 }
+```
+
+**Note:** The `scripts` array runs npm scripts from your eval fixture's `package.json`—these are your fixture's *own* scripts. `EVAL.ts` is a *separate* test file that the framework injects. They serve different purposes:
+- `scripts: ['test']` — Run the fixture's existing test suite (verifies the agent didn't break things)
+- `EVAL.ts` — Verify the agent completed the assigned task correctly
+
+You'll typically use both.
 ```
 
 ### Pattern: Measure true reliability (no early exit)
@@ -671,6 +792,8 @@ Each eval run incurs two types of costs:
 
 **Example:** Running 10 evals × 10 runs = 100 runs could cost $50-$200 with Opus.
 
+*Note: These are rough estimates. Check [Anthropic's pricing](https://anthropic.com/pricing) and Vercel billing for current rates.*
+
 **Cost-saving tips:**
 - Use `model: 'haiku'` while developing and debugging evals
 - Start with `runs: 1` until your eval is working correctly
@@ -766,6 +889,17 @@ AssertionError: No logout button found
 - Check `transcript.jsonl` to see what the agent actually did
 - Your prompt might be ambiguous—try making it more specific
 - The task might be too hard for the model—try a more capable model
+
+#### EVAL.ts Runtime Errors
+
+```
+Error: Cannot read properties of undefined (reading 'includes')
+```
+**Cause:** Your test code threw an exception—often from accessing properties on undefined values.
+**Fix:** Common causes:
+- Forgetting to `await` an async function (variable is a Promise, not the result)
+- Assuming a file exists when it doesn't—use try/catch around `sandbox.readFile()`
+- Parsing command output without checking `exitCode` first
 
 ### Debug Checklist
 

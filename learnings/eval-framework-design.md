@@ -39,6 +39,19 @@ Before you begin, make sure you have:
 
 ---
 
+## Installation
+
+```bash
+# Create a new eval project (recommended for beginners)
+npx eval init my-evals
+cd my-evals
+
+# Or add to an existing project
+npm install --save-dev @vercel/eval-framework
+```
+
+---
+
 ## How It Works (Visual Overview)
 
 Here's what happens when you run an eval:
@@ -177,6 +190,16 @@ Requirements:
 - Include acceptance criteria when possible
 - If something matters (like file location), say it explicitly
 
+**What the agent sees:**
+
+When the eval starts, the agent receives:
+1. The contents of `PROMPT.md` as its initial instruction
+2. Access to all files in your eval folder (except `PROMPT.md` and `EVAL.ts`)
+
+The agent can explore the codebase using file reading and shell commands, just like a human developer would. It does NOT automatically see all file contents—it must choose to read them.
+
+**Tip:** If certain files are critical context, mention them in your prompt: "See `src/App.tsx` for the current implementation."
+
 ---
 
 ### Step 3: Write Your Tests (EVAL.ts)
@@ -216,12 +239,22 @@ test('app still builds', async () => {
 
 The `sandbox` object is your interface to the isolated VM where the agent ran. It provides these methods:
 
-| Method | What it does | Example |
-|--------|--------------|---------|
-| `sandbox.exec('command')` | Run a shell command | `sandbox.exec('npm run build')` |
-| `sandbox.readFile('path')` | Read a file's contents | `sandbox.readFile('src/App.tsx')` |
-| `sandbox.writeFile('path', 'content')` | Write to a file | `sandbox.writeFile('test.txt', 'hello')` |
-| `sandbox.glob('pattern')` | Find files matching a pattern | `sandbox.glob('**/*.tsx')` |
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `sandbox.exec('command')` | `{ exitCode: number, stdout: string, stderr: string }` | Run a shell command |
+| `sandbox.readFile('path')` | `string` | Read file contents (throws if file doesn't exist) |
+| `sandbox.writeFile('path', 'content')` | `void` | Write or overwrite a file |
+| `sandbox.glob('pattern')` | `string[]` | Find files matching a glob pattern |
+
+**Error handling:** These methods throw exceptions on failure. Wrap in try/catch if you need to handle errors gracefully:
+
+```typescript
+try {
+  const content = await sandbox.readFile('maybe-missing.txt')
+} catch (err) {
+  // File doesn't exist, handle gracefully
+}
+```
 
 **Note:** You don't need to install `@vercel/eval-framework` in your eval folder. The framework provides it automatically when running tests.
 
@@ -324,9 +357,16 @@ export default {
   earlyExit: false,
 
   // npm scripts that must pass AFTER the agent finishes
-  // Runs `npm run <script>` for each, in order
+  // These run INSIDE the sandbox using your eval's package.json
+  // IMPORTANT: Each script must exist in your eval's package.json
+  // Runs `npm run <script>` for each, in order. Stops on first failure.
   // Default: []
   scripts: ['build', 'lint', 'typecheck'],
+
+  // Maximum time (in seconds) for the agent to complete the task
+  // If exceeded, the run fails with a timeout error
+  // Default: 300 (5 minutes)
+  timeout: 600,
 
   // Setup function that runs BEFORE the agent starts
   // Use this to configure the environment
@@ -346,6 +386,7 @@ export default {
 | `evals` | `string \| string[] \| function` | all | Which evals to run |
 | `runs` | `number` | `1` | Number of runs per eval |
 | `earlyExit` | `boolean` | `true` | Stop after first success |
+| `timeout` | `number` | `300` | Max seconds for agent to complete |
 | `scripts` | `string[]` | `[]` | npm scripts that must pass |
 | `setup` | `function` | none | Setup before agent starts |
 
@@ -400,6 +441,30 @@ export default {
 
 ---
 
+## Designing Effective Evals
+
+Writing good evals is as important as writing good tests. Here's what makes an eval effective:
+
+**Keep evals focused:** Each eval should test ONE capability. "Add a logout button" is better than "Add logout, refactor auth, and add tests."
+
+**Target 1-5 minute completion:** If an eval consistently takes 10+ minutes, the task may be too complex. Break it into smaller evals.
+
+**Test observable outcomes, not implementation:** Check that the button exists and works, not that the agent used a specific CSS class or variable name.
+
+**Include negative tests:** Verify the agent didn't break existing functionality:
+```typescript
+test('existing tests still pass', async () => {
+  const result = await sandbox.exec('npm test')
+  expect(result.exitCode).toBe(0)
+})
+```
+
+**Avoid ambiguous success criteria:** "Make it look better" is untestable. "Center the header text and use 16px font size" is testable.
+
+**Start simple, then add complexity:** Get a basic eval working before adding edge cases and additional requirements.
+
+---
+
 ## How Scoring Works
 
 Evals are **pass or fail**—there's no partial credit.
@@ -436,6 +501,28 @@ You don't need to install `@vercel/eval-framework` in your eval fixture. Here's 
 
 The import is resolved by the framework's test harness, not by your node_modules.
 
+### How much does running evals cost?
+
+Each eval run incurs two types of costs:
+
+| Cost Type | Source | Rough Estimate |
+|-----------|--------|----------------|
+| **AI API costs** | Anthropic API usage | Depends on model and tokens used |
+| **Compute costs** | Vercel Sandbox runtime | Billed per minute of compute time |
+
+**Rough cost per run (1-5 minute eval):**
+- Haiku: ~$0.10-$0.50
+- Sonnet: ~$0.25-$1.00
+- Opus: ~$0.50-$2.00
+
+**Example:** Running 10 evals × 10 runs = 100 runs could cost $50-$200 with Opus.
+
+**Cost-saving tips:**
+- Use `model: 'haiku'` while developing and debugging evals
+- Start with `runs: 1` until your eval is working correctly
+- Switch to `model: 'opus'` and higher `runs` only for final measurements
+- Use `earlyExit: true` (default) if you only need to know "does it work at all?"
+
 ---
 
 ## Troubleshooting
@@ -448,6 +535,7 @@ The import is resolved by the framework's test harness, not by your node_modules
 | "Agent seemed to succeed but tests failed" | Check `outputs/tests.txt` for test error details |
 | "Setup keeps failing" | Verify your eval fixture has a valid `package.json` |
 | "Missing VERCEL_TOKEN" | Add `VERCEL_TOKEN` or `VERCEL_OIDC_TOKEN` to your `.env` file |
+| "Eval timed out" | Increase `timeout` in config, or simplify the task |
 
 ### Common Errors and What They Mean
 

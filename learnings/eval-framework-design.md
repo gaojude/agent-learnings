@@ -3,28 +3,34 @@
 **Author:** judegao
 **Date:** 2026-01-26
 
-## Model
+## Overview
 
-```
-config(agent, variants, runs) + evals(prompt, fixture, test) → results
-```
+Agent-agnostic eval framework. Tests skills across different harnesses (Next.js, Nuxt, etc.) with composable agent definitions.
+
+Key ideas:
+- Agents are functions, composed via FP modifiers
+- Tests run outside sandbox, interrogate via API
+- Configs select agent + eval strategy, decoupled from test cases
 
 ## Structure
 
 ```
-agents/
+agents/                         # Agent definitions (FP style)
   claude.ts
   modifiers.ts
-configs/
+configs/                        # How to run (which agent, how many runs)
   skill-comparison.ts
-evals/
+  flakiness.ts
+evals/                          # What to test (pure test cases)
   server-component/
-    prompt.md
-    fixture/
-    page.test.ts
+    prompt.md                   # Task for agent
+    fixture/                    # Starting state → copied to sandbox
+    page.test.ts                # Assertions (runs on host)
 ```
 
 ## Agent
+
+Agents are functions: `(prompt, sandbox) → result`
 
 ```ts
 type Agent = (prompt: string, sandbox: Sandbox) => Promise<RunResult>
@@ -37,9 +43,12 @@ export const createClaude = (model = 'opus'): Agent =>
   }
 
 export const claude = createClaude('opus')
+export const sonnet = createClaude('sonnet')
 ```
 
 ## Modifiers
+
+Wrap agents to add behavior (preHooks, skills, etc.):
 
 ```ts
 // agents/modifiers.ts
@@ -49,11 +58,14 @@ export const withPreHook = (cmd: string) => (agent: Agent): Agent =>
     return agent(prompt, sandbox)
   }
 
+// Convenience
 export const withSkill = (pkg: string) => withPreHook(`npx ${pkg} install`)
 export const withClaudeMd = (path: string) => withPreHook(`cp ${path} CLAUDE.md`)
 ```
 
 ## Composition
+
+Compose agents for different variants:
 
 ```ts
 // agents/index.ts
@@ -71,6 +83,8 @@ export const claudeWithBoth = pipe(
 
 ## Config
 
+Configs pick agents and run strategy. Decoupled from test cases.
+
 ```ts
 // configs/skill-comparison.ts
 import { claude, claudeWithSkill } from '../agents'
@@ -84,33 +98,39 @@ export default {
 }
 ```
 
-## `runs` vs `bestOf`
+### `runs` vs `bestOf`
 
 | Key | Behavior |
 |-----|----------|
-| `runs: N` | Run all N, report flakiness stats |
-| `bestOf: N` | Run up to N, early exit on pass |
+| `runs: N` | Run all N, report flakiness (passRate, stddev) |
+| `bestOf: N` | Run up to N, early exit on pass, report best |
 
 ## Test
 
-Tests run on host, interrogate sandbox via API:
+Tests run on host. Sandbox stays pure (exactly what agent produced).
 
 ```ts
 // evals/server-component/page.test.ts
 import { test, expect } from '@vercel/eval-framework/test'
 
-test('renders', async ({ sandbox }) => {
+test('renders button', async ({ sandbox }) => {
   const page = await sandbox.readFile('app/page.tsx')
   expect(page).toContain('<button')
 })
 
-test('builds', async ({ sandbox }) => {
+test('builds successfully', async ({ sandbox }) => {
   const { exitCode } = await sandbox.exec('npm run build')
   expect(exitCode).toBe(0)
+})
+
+test('agent was efficient', async ({ trace }) => {
+  expect(trace.commands.filter(c => c.includes('build'))).toHaveLength(1)
 })
 ```
 
 ## Sandbox
+
+Interface for test assertions. Providers: local, Docker, Vercel Sandbox.
 
 ```ts
 interface Sandbox {
@@ -123,22 +143,26 @@ interface Sandbox {
 }
 ```
 
-Providers: local, Docker, Vercel Sandbox.
-
 ## CLI
 
+Config is primary arg. Filters are positional (default: all evals).
+
 ```bash
-npx eval configs/default.ts                    # all evals
-npx eval configs/skill-comparison.ts "server-*" # filtered
+npx eval configs/default.ts                     # all evals
+npx eval configs/skill-comparison.ts "server-*" # glob filter
+npx eval configs/flakiness.ts 001 002 003       # specific evals
 ```
 
 ## Flow
 
 ```
-1. fixture/ → sandbox
-2. agent(prompt, sandbox)
-3. tests interrogate sandbox
-4. report
+1. Read config (agent, variants, runs/bestOf)
+2. For each eval:
+   a. fixture/ → sandbox
+   b. agent(prompt, sandbox)
+   c. tests interrogate sandbox from host
+   d. record pass/fail
+3. Report results
 ```
 
 ## Future

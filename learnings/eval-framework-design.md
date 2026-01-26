@@ -60,17 +60,17 @@ Here's what happens when you run an eval:
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         YOUR MACHINE                                    │
 │                                                                         │
-│  ┌─────────────────┐      ┌─────────────────┐      ┌────────────────┐  │
-│  │ experiments/    │      │ evals/          │      │ .env           │  │
-│  │ my-experiment.ts│      │ add-button/     │      │ API keys       │  │
-│  └────────┬────────┘      └────────┬────────┘      └───────┬────────┘  │
-│           │                        │                       │           │
-│           └────────────────────────┼───────────────────────┘           │
+│  ┌─────────────────┐      ┌─────────────────┐      ┌────────────────┐   │
+│  │ experiments/    │      │ evals/          │      │ .env           │   │
+│  │ my-experiment.ts│      │ add-button/     │      │ API keys       │   │
+│  └────────┬────────┘      └────────┬────────┘      └───────┬────────┘   │
+│           │                        │                       │            │
+│           └────────────────────────┼───────────────────────┘            │
 │                                    │                                    │
-│                          ┌─────────▼─────────┐                         │
-│                          │  npx eval run     │                         │
-│                          │  (framework CLI)  │                         │
-│                          └─────────┬─────────┘                         │
+│                          ┌─────────▼─────────┐                          │
+│                          │  npx eval run     │                          │
+│                          │  (framework CLI)  │                          │
+│                          └─────────┬─────────┘                          │
 └────────────────────────────────────┼────────────────────────────────────┘
                                      │
                                      ▼
@@ -98,11 +98,11 @@ Here's what happens when you run an eval:
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         YOUR MACHINE                                    │
 │                                                                         │
-│   results/my-experiment/2026-01-26T12-00-00Z/                          │
+│   results/my-experiment/2026-01-26T12-00-00Z/                           │
 │   ├── add-button/                                                       │
-│   │   ├── run-1/result.json      ← Pass/fail + timing                  │
-│   │   ├── run-1/transcript.jsonl ← Full agent conversation             │
-│   │   └── summary.json           ← Aggregated pass rate                │
+│   │   ├── run-1/result.json      ← Pass/fail + timing                   │
+│   │   ├── run-1/transcript.jsonl ← Full agent conversation              │
+│   │   └── summary.json           ← Aggregated pass rate                 │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```

@@ -45,61 +45,31 @@ Requirements:
 
 ### EVAL.ts
 
-Validation tests. Can import from the fixture since it runs after the agent:
+Validation tests. Uses `defineEval` which provides the sandbox:
 
 ```ts
 // evals/add-button/EVAL.ts
-import { files, exec } from '@vercel/eval-framework'
+import { defineEval } from '@vercel/eval-framework'
 import { test, expect } from 'vitest'
 
-test('logout button exists somewhere in codebase', () => {
-  const hasLogout = Object.values(files).some(c => /logout/i.test(c))
-  expect(hasLogout).toBe(true)
+export default defineEval((sandbox) => {
+  test('logout button exists somewhere in codebase', () => {
+    const hasLogout = Object.values(sandbox.files).some(c => /logout/i.test(c))
+    expect(hasLogout).toBe(true)
+  })
+
+  test('logout button has click handler', () => {
+    const hasHandler = Object.values(sandbox.files).some(c => /onClick.*logout/i.test(c))
+    expect(hasHandler).toBe(true)
+  })
+
+  test('app starts without errors', async () => {
+    await sandbox.exec('npm run dev -- --port 3333 &')
+    await sandbox.exec('sleep 2')
+    const health = await sandbox.exec('curl -s http://localhost:3333')
+    expect(health.exitCode).toBe(0)
+  })
 })
-
-test('logout button has click handler', () => {
-  const hasHandler = Object.values(files).some(c => /onClick.*logout/i.test(c))
-  expect(hasHandler).toBe(true)
-})
-
-test('app starts without errors', async () => {
-  const result = await exec('npm run dev -- --port 3333 &')
-  await exec('sleep 2')
-  const health = await exec('curl -s http://localhost:3333')
-  expect(health.exitCode).toBe(0)
-})
-```
-
-### The `files` Object
-
-The framework provides `files`—a `Record<string, string>` mapping file paths to contents.
-
-**Paths:** Relative to project root, no leading `./` (e.g., `src/App.tsx`, not `./src/App.tsx`)
-
-**Excluded:** `node_modules/`, `.git/`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `EVAL.ts`
-
-**Binary files:** Excluded. Only text files are included.
-
-```ts
-import { files } from '@vercel/eval-framework'
-
-files['src/App.tsx']              // get specific file
-Object.keys(files)                // list all paths
-Object.values(files)              // all contents
-```
-
-### The `exec` Function
-
-The framework provides `exec`—runs commands in the same sandbox as the eval. Useful for probing runtime behavior.
-
-```ts
-import { exec } from '@vercel/eval-framework'
-
-const result = await exec('npm run build')
-// result: { stdout: string, stderr: string, exitCode: number }
-
-expect(result.exitCode).toBe(0)
-expect(result.stdout).toContain('Build completed')
 ```
 
 Use standard vitest assertions. The framework doesn't abstract vitest—you get full access to all its features.
@@ -362,8 +332,15 @@ interface Sandbox {
   exec(cmd: string): Promise<{ stdout: string; stderr: string; exitCode: number }>
   readFile(path: string): Promise<string>
   writeFile(path: string, content: string): Promise<void>
+  files: Record<string, string>  // populated after agent runs (EVAL.ts only)
 }
 ```
+
+**`sandbox.files`:** A `Record<string, string>` mapping file paths to contents. Only available in EVAL.ts (after agent has run).
+
+- **Paths:** Relative to project root, no leading `./` (e.g., `src/App.tsx`)
+- **Excluded:** `node_modules/`, `.git/`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `EVAL.ts`
+- **Binary files:** Excluded. Only text files included.
 
 ### Vercel Sandbox
 

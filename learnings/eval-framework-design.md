@@ -178,6 +178,27 @@ Optional but common:
 }
 ```
 
+### How Dependencies Are Installed
+
+When the framework runs your eval:
+
+1. Your fixture folder is copied to the sandbox (excluding `node_modules/`)
+2. `npm install` runs automatically using your `package.json`
+3. The agent receives PROMPT.md and starts working
+
+**Important notes:**
+- Do NOT include `node_modules/` in your fixture (it's ignored)
+- Use `package-lock.json` if you need reproducible dependency versions
+- The sandbox uses **Node.js v20.x LTS**
+- All packages must be published to npm (no local or private packages)
+
+**Tip:** Test your fixture locally first:
+```bash
+cd evals/my-eval
+rm -rf node_modules
+npm install && npm run build
+```
+
 ---
 
 ## Step-by-Step Guide
@@ -195,6 +216,10 @@ VERCEL_TOKEN=your-vercel-token
 # OR use OIDC token if your organization uses that
 VERCEL_OIDC_TOKEN=your-oidc-token
 ```
+
+**How to get these:**
+- `ANTHROPIC_API_KEY` - Create an account at [console.anthropic.com](https://console.anthropic.com), then go to Settings → API Keys → Create Key
+- `VERCEL_TOKEN` - Log in at [vercel.com](https://vercel.com), go to Settings → Tokens → Create Token
 
 **Why do I need these?**
 - `ANTHROPIC_API_KEY` - The AI agent needs this to function

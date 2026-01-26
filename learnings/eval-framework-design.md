@@ -11,40 +11,153 @@ A zero-config, agent-agnostic framework for evaluating AI coding agents across a
 ## Core Model
 
 ```
-prompt + fixture + sandbox + agent → transformed state → validation
+config + test cases + sandbox + agent → transformed state → validation
 ```
 
 - **Agents act on environments via tools** (file writes, commands), not just stdout
 - **Tests run outside the sandbox**, interrogating it via API
 - **Sandbox stays pure** - exactly what the agent produced
+- **Configs are decoupled from test cases** - same config applies to many tests
 
 ## File Structure
 
 ```
-evals/
+configs/                        # How to run evals
+  default.ts
+  flakiness.ts
+  skill-comparison.ts
+  agent-comparison.ts
+
+evals/                          # What to test (pure test cases)
   add-button/
-    prompt.md           # Agent instructions
-    fixture/            # Starting state → copied to sandbox
+    prompt.md                   # Agent instructions
+    fixture/                    # Starting state → copied to sandbox
       app/page.tsx
       package.json
-    page.test.ts        # Assertions (never enters sandbox)
-    eval.config.ts      # Optional overrides
+    page.test.ts                # Assertions (runs on host, not in sandbox)
+  server-component/
+    prompt.md
+    fixture/
+    page.test.ts
 ```
 
 | Path | Purpose | Copied to sandbox? |
 |------|---------|-------------------|
-| `fixture/` | Input state for agent | Yes (before agent) |
-| `prompt.md` | Agent instructions | No |
-| `*.test.ts` | Eval assertions | No (runs on host) |
-| `eval.config.ts` | Settings | No |
+| `configs/*.ts` | Run configuration | No |
+| `evals/*/fixture/` | Input state for agent | Yes (before agent) |
+| `evals/*/prompt.md` | Agent instructions | No |
+| `evals/*/*.test.ts` | Eval assertions | No (runs on host) |
+
+## CLI
+
+Config file is the primary argument. Filters are positional args after config (default: all).
+
+```bash
+npx eval configs/default.ts                          # All evals
+npx eval configs/default.ts server-component         # One eval
+npx eval configs/default.ts server-component client-component  # Multiple
+npx eval configs/default.ts "server-*"               # Glob pattern
+npx eval configs/flakiness.ts "server-*" "client-*"  # Multiple globs
+```
+
+## Config Design
+
+Configs define "how" to run evals. Test cases define "what" to test.
+
+### Simple: Single Run
+
+```ts
+// configs/default.ts
+export default {
+  agent: 'claude',
+  sandbox: 'vercel',
+  timeout: 300_000,
+}
+```
+
+### Flakiness: Run N Times
+
+```ts
+// configs/flakiness.ts
+// Run 10 times, report pass rate + variance
+export default {
+  runs: 10,
+}
+```
+
+### Comparison: Variants
+
+```ts
+// configs/skill-vs-baseline.ts
+export default {
+  variants: {
+    baseline: {},
+    withSkill: { preHook: 'npx @vercel/next-skill install' },
+  },
+}
+```
+
+### Comparison with Multiple Runs
+
+```ts
+// configs/skill-vs-claudemd-vs-baseline.ts
+// Smart defaults: with variants, runs implies best-of behavior
+// (parallel execution, early exit on pass, report best)
+export default {
+  variants: {
+    baseline: {},
+    withClaudeMd: { preHook: 'cp ./templates/nextjs.md CLAUDE.md' },
+    withSkill: { preHook: 'npx @vercel/next-skill install' },
+  },
+  runs: 10,
+}
+```
+
+### Agent Comparison
+
+```ts
+// configs/agent-comparison.ts
+export default {
+  variants: {
+    claude: { agent: 'claude' },
+    codex: { agent: 'codex' },
+    cursor: { agent: 'cursor' },
+  },
+  runs: 5,
+}
+```
+
+### Model Comparison
+
+```ts
+// configs/model-comparison.ts
+export default {
+  variants: {
+    opus: { agent: 'claude', model: 'opus' },
+    sonnet: { agent: 'claude', model: 'sonnet' },
+  },
+}
+```
+
+## Smart Defaults
+
+Behavior is inferred from config shape:
+
+| Config | Behavior |
+|--------|----------|
+| `{ runs: 10 }` | Flakiness mode: run all 10, report stats |
+| `{ variants: {...} }` | Comparison mode: run each variant once |
+| `{ variants: {...}, runs: 10 }` | Best-of mode: parallel, early exit on pass, report best per variant |
 
 ## Execution Flow
 
 ```
 1. Setup:     fixture/ ──────────────────▶ sandbox
-2. Agent:     agent.run(prompt, sandbox)  ▶ sandbox (modified)
-3. Validate:  tests interrogate sandbox from outside
-4. Report:    pass/fail + traces
+2. PreHook:   config.preHook runs (if defined)
+3. Agent:     agent.run(prompt, sandbox)  ▶ sandbox (modified)
+4. PostHook:  config.postHook runs (if defined)
+5. Validate:  tests interrogate sandbox from outside
+6. Report:    pass/fail + traces
 ```
 
 ## Test Design
@@ -108,57 +221,57 @@ interface Sandbox {
   // Command execution
   exec(cmd: string): Promise<{ stdout: string; stderr: string; exitCode: number }>
 
-  // HTTP (starts dev server internally)
+  // HTTP (sandbox handles server internally)
   fetch(route: string): Promise<string>
-  serve(cmd: string, opts: { port: number }): Promise<string> // returns URL
 }
 ```
 
 Sandbox providers: local, Docker, Vercel Sandbox.
 
-## CLI
+## Output Structure
 
-```bash
-npx @vercel/eval                    # Run all evals
-npx @vercel/eval add-button         # Run specific eval
-npx @vercel/eval --agent codex      # Swap agent
-npx @vercel/eval --sandbox docker   # Use Docker isolation
-npx @vercel/eval --json             # Machine-readable output
+Results mirror the config + eval structure:
+
+```
+results/
+  skill-vs-baseline/
+    2026-01-26T12:00:00/
+      server-component/
+        baseline.json
+        withSkill.json
+        comparison.json
+      client-component/
+        ...
+  flakiness/
+    2026-01-26T13:00:00/
+      server-component/
+        run-01.json
+        run-02.json
+        ...
+        summary.json   # { passRate: 0.8, mean: 45s, stddev: 5s }
 ```
 
-## Progressive Disclosure
+## Example Output
 
-**Level 1 - Zero config:** Just `fixture/`, `prompt.md`, `*.test.ts`
-
-**Level 2 - Config:**
-```ts
-// eval.config.ts
-export default {
-  agent: 'codex',
-  sandbox: 'docker',
-  timeout: 300_000,
-}
 ```
+skill-vs-claudemd-vs-baseline @ server-component
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                  baseline    withClaudeMd    withSkill
+Best run          ✗ FAIL      ✓ PASS          ✓ PASS
+Pass rate         2/10        7/10            10/10 ←early exit
+Mean duration     45s         52s             38s
 
-**Level 3 - Programmatic:**
-```ts
-import { createEval } from '@vercel/eval-framework'
-
-const result = await createEval({
-  prompt: 'Add a submit button',
-  fixture: './my-app',
-  agent: myCustomAgent,
-  sandbox: createDockerSandbox(),
-})
+Winner: withSkill (100% pass rate, fastest)
 ```
 
 ## Key Decisions
 
 1. **Tests outside sandbox** - Sandbox stays pure, tests interrogate from host
-2. **Agent-agnostic** - Any agent that can manipulate a sandbox
-3. **Framework-agnostic** - Works with Next.js, Nuxt, Remix, etc.
-4. **Convention over config** - File structure is the API
-5. **E2E is optional** - Most validation is file/command assertions; full Playwright is progressive enhancement
+2. **Configs decoupled from test cases** - One config applies to many tests
+3. **Agent-agnostic** - Any agent that can manipulate a sandbox
+4. **Framework-agnostic** - Works with Next.js, Nuxt, Remix, etc.
+5. **Smart defaults** - Behavior inferred from config shape (flakiness vs comparison vs best-of)
+6. **Config is primary CLI arg** - `npx eval <config> [filters...]`
 
 ## Architecture
 
@@ -166,6 +279,7 @@ const result = await createEval({
 @vercel/eval-framework/
   core/
     runner.ts           # Orchestration
+    config.ts           # Config parsing + smart defaults
     sandbox/
       local.ts
       docker.ts

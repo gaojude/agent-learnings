@@ -26,7 +26,6 @@ configs/                        # How to run evals
   default.ts
   flakiness.ts
   skill-comparison.ts
-  agent-comparison.ts
 
 evals/                          # What to test (pure test cases)
   add-button/
@@ -75,13 +74,23 @@ export default {
 }
 ```
 
-### Flakiness: Run N Times
+### Flakiness: Run N Times (report stats)
 
 ```ts
 // configs/flakiness.ts
-// Run 10 times, report pass rate + variance
+// Run ALL 10 times, report pass rate + variance
 export default {
   runs: 10,
+}
+```
+
+### Best-of: Run N Times (early exit on pass)
+
+```ts
+// configs/best-of.ts
+// Run up to 10 times, stop when one passes
+export default {
+  bestOf: 10,
 }
 ```
 
@@ -97,19 +106,32 @@ export default {
 }
 ```
 
-### Comparison with Multiple Runs
+### Comparison + Flakiness
 
 ```ts
-// configs/skill-vs-claudemd-vs-baseline.ts
-// Smart defaults: with variants, runs implies best-of behavior
-// (parallel execution, early exit on pass, report best)
+// configs/skill-flakiness.ts
+// Run each variant 10 times, report stats for each
+export default {
+  variants: {
+    baseline: {},
+    withSkill: { preHook: 'npx @vercel/next-skill install' },
+  },
+  runs: 10,
+}
+```
+
+### Comparison + Best-of
+
+```ts
+// configs/skill-best-of.ts
+// Run each variant up to 10 times, early exit on pass, report best
 export default {
   variants: {
     baseline: {},
     withClaudeMd: { preHook: 'cp ./templates/nextjs.md CLAUDE.md' },
     withSkill: { preHook: 'npx @vercel/next-skill install' },
   },
-  runs: 10,
+  bestOf: 10,
 }
 ```
 
@@ -123,7 +145,7 @@ export default {
     codex: { agent: 'codex' },
     cursor: { agent: 'cursor' },
   },
-  runs: 5,
+  bestOf: 5,
 }
 ```
 
@@ -139,15 +161,16 @@ export default {
 }
 ```
 
-## Smart Defaults
+## `runs` vs `bestOf`
 
-Behavior is inferred from config shape:
+Two explicit keys with clear semantics:
 
-| Config | Behavior |
-|--------|----------|
-| `{ runs: 10 }` | Flakiness mode: run all 10, report stats |
-| `{ variants: {...} }` | Comparison mode: run each variant once |
-| `{ variants: {...}, runs: 10 }` | Best-of mode: parallel, early exit on pass, report best per variant |
+| Key | Behavior |
+|-----|----------|
+| `runs: N` | Run ALL N times, report flakiness (passRate, stddev, mean duration) |
+| `bestOf: N` | Run up to N times, stop on pass, report best result |
+
+No magic. The key is the intent.
 
 ## Execution Flow
 
@@ -254,7 +277,7 @@ results/
 ## Example Output
 
 ```
-skill-vs-claudemd-vs-baseline @ server-component
+skill-best-of @ server-component
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                   baseline    withClaudeMd    withSkill
 Best run          ✗ FAIL      ✓ PASS          ✓ PASS
@@ -268,9 +291,9 @@ Winner: withSkill (100% pass rate, fastest)
 
 1. **Tests outside sandbox** - Sandbox stays pure, tests interrogate from host
 2. **Configs decoupled from test cases** - One config applies to many tests
-3. **Agent-agnostic** - Any agent that can manipulate a sandbox
-4. **Framework-agnostic** - Works with Next.js, Nuxt, Remix, etc.
-5. **Smart defaults** - Behavior inferred from config shape (flakiness vs comparison vs best-of)
+3. **Explicit `runs` vs `bestOf`** - No magic, key is the intent
+4. **Agent-agnostic** - Any agent that can manipulate a sandbox
+5. **Framework-agnostic** - Works with Next.js, Nuxt, Remix, etc.
 6. **Config is primary CLI arg** - `npx eval <config> [filters...]`
 
 ## Architecture
@@ -279,7 +302,7 @@ Winner: withSkill (100% pass rate, fastest)
 @vercel/eval-framework/
   core/
     runner.ts           # Orchestration
-    config.ts           # Config parsing + smart defaults
+    config.ts           # Config parsing
     sandbox/
       local.ts
       docker.ts
@@ -300,3 +323,7 @@ Winner: withSkill (100% pass rate, fastest)
 2. **Behavioral** - HTTP response contains X, dev server starts
 3. **Process** - Agent didn't loop, used correct tools, was efficient
 4. **Qualitative** - Model-assisted grading against rubric
+
+## Future (v2)
+
+- **Dimensions** - Cartesian product of variants (skill × model × sandbox)

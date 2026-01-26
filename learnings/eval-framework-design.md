@@ -5,325 +5,192 @@
 
 ## Introduction
 
-`@vercel/eval-framework` is an agent-agnostic evaluation framework for testing AI coding agents. It enables you to run the same test cases across different agent configurations (skills, CLAUDE.md files, models) and measure success rates.
+`@vercel/eval-framework` is an opinionated evaluation framework for testing AI coding agents on Node.js projects.
 
-The framework separates **what you're testing** (evals) from **how you're running tests** (configs), making it easy to compare different agent setups without duplicating test cases.
+**Assumptions:** npm, vitest
 
 ## Project Structure
 
 ```
 my-evals/
-├── agents/                    # Your agent definitions
-│   └── claude.ts
-├── configs/                   # Run configurations
-│   └── skill-comparison.ts
-├── evals/                     # Test cases
-│   └── server-component/
-│       ├── prompt.md          # Task description for the agent
-│       ├── fixture/           # Starting project state
-│       │   ├── app/page.tsx
-│       │   └── package.json
-│       └── page.test.ts       # Validation tests (optional)
-└── results/                   # Output from eval runs
-    └── skill-comparison/
-        └── 2026-01-26T12:00:00/
-            └── server-component/
-                ├── baseline.json
-                ├── withSkill.json
-                └── comparison.json
+├── evals/
+│   └── add-button/           # This folder IS the fixture
+│       ├── src/
+│       │   └── App.tsx
+│       ├── package.json
+│       └── __eval__.ts       # Hidden from agent, injected after
+└── results/
 ```
 
-## Defining Agents
+The eval folder **is** the fixture—a normal Node.js project. The only special file is `__eval__.ts`, which contains the prompt and assertions. The agent never sees this file.
 
-Agents are functions that take a prompt and sandbox, then return a transcript.
+## Writing Evals
 
-The transcript is stored in the results folder for later investigation. When an eval fails, you can analyze the transcript to understand what the agent did, what tools it called, and where it went wrong. This is how you derive learnings and improve the agent.
+Create a folder with your starting code and add `__eval__.ts`:
 
 ```ts
-// agents/claude.ts
-import type { Agent, Transcript } from '@vercel/eval-framework'
+// evals/add-button/__eval__.ts
+export const prompt = "Add a logout button to the header"
+export const scripts = ["build", "lint"]
 
-type Agent = (prompt: string, sandbox: Sandbox) => Promise<Transcript>
-
-export const claude: Agent = async (prompt, sandbox) => {
-  await sandbox.exec('npm i -g @anthropic-ai/claude-code')
-  await sandbox.exec(`claude --print --model opus -p "${prompt}"`)
-
-  // Read transcript for storage in results
-  const transcript = await sandbox.readFile('~/.claude/projects/.../transcript.jsonl')
-  return JSON.parse(transcript)
-}
-```
-
-For special setup (like installing a skill or copying a CLAUDE.md file), embed that setup directly in the agent:
-
-```ts
-// agents/claude-with-skill.ts
-export const claudeWithSkill: Agent = async (prompt, sandbox) => {
-  // Setup: install skill before running
-  await sandbox.exec('npx @vercel/next-skill install')
-
-  // Run agent
-  await sandbox.exec('npm i -g @anthropic-ai/claude-code')
-  await sandbox.exec(`claude --print --model opus -p "${prompt}"`)
-
-  const transcript = await sandbox.readFile('~/.claude/projects/.../transcript.jsonl')
-  return JSON.parse(transcript)
-}
-```
-
-## Writing Configs
-
-Configs determine which agent to run and how many times.
-
-### Single Run
-
-The simplest config runs each eval once:
-
-```ts
-// configs/default.ts
-import { claude } from '../agents/claude'
-
-export default {
-  agent: claude,
-}
-```
-
-### Best-of N Runs
-
-Use `bestOf` to run until you find a pass (or hit the limit). This is useful when you want to know "can this agent ever pass this eval?"
-
-```ts
-// configs/best-of.ts
-import { claude } from '../agents/claude'
-
-export default {
-  agent: claude,
-  bestOf: 10,  // Stop early when a run passes
-}
-```
-
-### Flakiness Testing
-
-Use `runs` to run every time and report statistics. This is useful for measuring reliability.
-
-```ts
-// configs/flakiness.ts
-import { claude } from '../agents/claude'
-
-export default {
-  agent: claude,
-  runs: 10,  // Run all 10, report passRate, stddev, mean duration
-}
-```
-
-### Comparing Variants
-
-Use `variants` to compare different agent configurations:
-
-```ts
-// configs/skill-comparison.ts
-import { claude } from '../agents/claude'
-import { claudeWithSkill } from '../agents/claude-with-skill'
-
-export default {
-  variants: {
-    baseline: claude,
-    withSkill: claudeWithSkill,
-  },
-}
-```
-
-You can combine `variants` with `runs` or `bestOf`:
-
-```ts
-// configs/skill-flakiness.ts
-export default {
-  variants: {
-    baseline: claude,
-    withSkill: claudeWithSkill,
-  },
-  runs: 10,  // Run each variant 10 times
-}
-```
-
-## Running Evals
-
-```bash
-# Run all evals with a config
-npx eval configs/default.ts
-
-# Run specific evals
-npx eval configs/default.ts server-component
-
-# Run evals matching a pattern
-npx eval configs/flakiness.ts "server-*"
-```
-
-## Writing Tests
-
-Test files validate that the agent made the correct changes. They're copied to the sandbox after the agent finishes, then executed inside the sandbox with `vitest run`.
-
-Since tests run inside the sandbox (same directory as the fixture), file paths are relative to the project root:
-
-```ts
-// evals/server-component/page.test.ts
+import { files } from '@vercel/eval-framework'
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'fs'
 
-describe('server component', () => {
-  it('fetches data on the server', () => {
-    // Runs inside sandbox, so paths are relative to project root
-    const page = readFileSync('./app/page.tsx', 'utf-8')
-    expect(page).toContain('async function')
-    expect(page).toContain('fetch')
+describe('logout button', () => {
+  it('exists somewhere in codebase', () => {
+    const hasLogout = Object.values(files).some(c => /logout/i.test(c))
+    expect(hasLogout).toBe(true)
   })
 
-  it('does not use client directive', () => {
-    const page = readFileSync('./app/page.tsx', 'utf-8')
-    expect(page).not.toContain("'use client'")
+  it('has click handler', () => {
+    const hasHandler = Object.values(files).some(c => /onClick.*logout/i.test(c))
+    expect(hasHandler).toBe(true)
   })
 })
 ```
 
-## How Evals are Scored
+### Exports
 
-An eval run is binary: **pass (1) or fail (0)**. No partial scores.
+| Export | Type | Description |
+|--------|------|-------------|
+| `prompt` | `string` | What to ask the agent |
+| `scripts` | `string[]` | npm scripts that must exit 0 (optional) |
 
-For an eval to pass, ALL of the following must succeed:
+### The `files` Object
 
-| Check | How it runs | Required |
-|-------|-------------|----------|
-| **Build** | `npm run build` | Yes - must be defined in package.json |
-| **Lint** | `npm run lint` | Yes - must be defined in package.json |
-| **Test** | `npm run test` (vitest) | Yes - if test files exist |
+The framework provides `files`—a `Record<string, string>` mapping file paths to contents. This is populated with the agent's output (excluding `node_modules`, `.git`, lockfiles, etc.) before tests run.
 
-If `build` or `lint` scripts are not defined in package.json, the eval fails. This prevents false positives from missing validation.
+```ts
+import { files } from '@vercel/eval-framework'
 
-The framework is **not tied to Next.js**—it works with any project that defines `build` and `lint` scripts in package.json.
+files['src/App.tsx']              // get specific file
+Object.keys(files)                // list all paths
+Object.values(files)              // all contents
+```
 
-## Results
+Use standard vitest assertions. The framework doesn't abstract vitest—you get full access to all its features.
 
-Each eval run produces a result file with detailed information for investigation:
+## Execution Flow
 
-```json
-// results/default/2026-01-26T12:00:00/server-component/run-1.json
-{
-  "eval": "server-component",
-  "passed": false,
-  "duration": 45200,
-  "checks": {
-    "build": { "passed": true, "duration": 12300, "output": "..." },
-    "lint": { "passed": true, "duration": 2100, "output": "..." },
-    "test": { "passed": false, "duration": 1800, "output": "...", "failures": ["renders product name"] }
-  },
-  "transcript": [
-    { "type": "tool_use", "tool": "write_file", "path": "app/page.tsx", ... },
-    { "type": "tool_use", "tool": "bash", "command": "npm install", ... },
-    ...
-  ],
-  "metadata": {
-    "agent": "claude",
-    "model": "opus",
-    "timestamp": "2026-01-26T12:00:00Z"
-  }
+1. Copy eval folder to sandbox (excluding `__eval__.ts`)
+2. Run `npm install`
+3. Run agent with `prompt`
+4. Populate `files` with output
+5. Inject `__eval__.ts`
+6. Run vitest
+7. Run `scripts` (if defined)
+8. Result: **0 or 1**
+
+## Scoring
+
+An eval is binary: **pass (1) or fail (0)**. No partial scores.
+
+For an eval to pass:
+- All vitest tests must pass
+- All `scripts` must exit 0
+
+## Defining Agents
+
+An agent is just a function. Define it anywhere you want:
+
+```ts
+// my-agent.ts
+import type { Agent } from '@vercel/eval-framework'
+
+export const claude: Agent = async (prompt, sandbox) => {
+  await sandbox.exec('npm i -g @anthropic-ai/claude-code')
+  await sandbox.exec(`claude --print -p "${prompt}"`)
+
+  const transcript = await sandbox.readFile('~/.claude/.../transcript.jsonl')
+  return JSON.parse(transcript)
 }
 ```
 
-The transcript is critical for improvement. When an eval fails, analyze the transcript to understand:
-- What files did the agent create/modify?
-- What commands did it run?
-- Where did it go wrong?
+The transcript is stored for later investigation. When an eval fails, analyze it to understand what the agent did and where it went wrong.
 
-This is how you derive learnings and improve agents or skills.
+## CLI
+
+```bash
+# Single run
+npx eval my-agent.ts
+
+# Run specific eval
+npx eval my-agent.ts add-button
+
+# Best of N (stop on first pass)
+npx eval my-agent.ts --best-of 5
+
+# Flakiness testing (run all, report stats)
+npx eval my-agent.ts --runs 10
+
+# Compare agents
+npx eval agent-a.ts agent-b.ts --runs 10
+```
 
 ## CLI Output
 
 ### Single Run
 
-When running a single eval, the CLI shows a simple pass/fail:
-
 ```
-npx eval configs/default.ts server-component
+npx eval my-agent.ts add-button
 
-server-component ✓ PASS (45.2s)
-```
-
-Or on failure:
-
-```
-server-component ✗ FAIL (38.1s)
-  Build: ✓
-  Lint:  ✓
-  Test:  ✗ (1 failed)
-    - renders product name
-
-Results: results/default/2026-01-26T12:00:00/server-component/
-```
-
-### Best-of Report
-
-```
-npx eval configs/best-of.ts server-component
-
-server-component (best of 10)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Result:    ✓ PASS
-Attempts:  3 (stopped early)
-Duration:  38.2s
-
-Results: results/best-of/2026-01-26T12:00:00/server-component/
+add-button ✓ PASS (45.2s)
 ```
 
 ### Flakiness Report
 
 ```
-npx eval configs/flakiness.ts server-component
+npx eval my-agent.ts --runs 10
 
-server-component (10 runs)
+add-button (10 runs)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Pass rate:  7/10 (70%)
 Mean:       45.2s
 Stddev:     8.3s
-
-Results: results/flakiness/2026-01-26T12:00:00/server-component/
 ```
 
-### Variants Comparison
+### Agent Comparison
 
 ```
-npx eval configs/skill-comparison.ts server-component
+npx eval agent-a.ts agent-b.ts --runs 10
 
-server-component
+add-button (10 runs each)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            baseline    withSkill
-Result      ✗ FAIL      ✓ PASS
-Duration    38.2s       42.1s
-
-Winner: withSkill
-
-Results: results/skill-comparison/2026-01-26T12:00:00/server-component/
-```
-
-### Variants + Flakiness
-
-```
-npx eval configs/skill-flakiness.ts server-component
-
-server-component (10 runs each)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            baseline    withSkill
+            agent-a     agent-b
 Pass rate   4/10        9/10
 Mean        48.2s       41.3s
 
-Winner: withSkill (90%)
-
-Results: results/skill-flakiness/2026-01-26T12:00:00/server-component/
+Winner: agent-b (90%)
 ```
 
-## Sandbox
+## Results
 
-The sandbox provides an isolated environment for each eval run.
+Each run produces a result file:
+
+```json
+{
+  "eval": "add-button",
+  "passed": true,
+  "duration": 45200,
+  "scripts": {
+    "build": { "passed": true, "duration": 12300 },
+    "lint": { "passed": true, "duration": 2100 }
+  },
+  "tests": {
+    "passed": true,
+    "failures": []
+  },
+  "transcript": [...],
+  "metadata": {
+    "agent": "my-agent.ts",
+    "timestamp": "2026-01-26T12:00:00Z"
+  }
+}
+```
+
+The transcript is critical for improvement. When an eval fails, analyze it to derive learnings and improve the agent.
+
+## Sandbox
 
 ```ts
 interface Sandbox {
@@ -334,22 +201,3 @@ interface Sandbox {
 ```
 
 Providers: local, Docker, Vercel Sandbox.
-
-## Execution Flow
-
-1. Framework reads config and discovers evals
-2. For each eval × variant × run:
-   - Create sandbox
-   - Copy `fixture/` to sandbox
-   - Run `agent(prompt, sandbox)`
-   - Copy test files to sandbox (if any)
-   - Run `npm run build`
-   - Run `npm run lint`
-   - Run `npm run test` (if test files exist)
-   - Record pass/fail (all must pass)
-   - Save transcript and results to `results/`
-3. Report summary
-
-## Future
-
-- `dimensions` for cartesian product comparisons (skill × model × sandbox)

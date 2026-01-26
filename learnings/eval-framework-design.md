@@ -146,6 +146,38 @@ my-evals/
 - **Experiment** = A configuration that says "run these evals X times with this agent"
 - **Sandbox** = An isolated virtual machine where the agent runs (so it can't affect your real system)
 
+### What Makes a Valid Eval Fixture
+
+Each folder in `evals/` must contain these files:
+
+| File | Required | Purpose |
+|------|----------|---------|
+| `PROMPT.md` | Yes | Instructions for the agent |
+| `EVAL.ts` | Yes | Vitest tests to verify success |
+| `package.json` | Yes | Must include `"type": "module"` and any dependencies |
+
+Optional but common:
+- Source files (`.ts`, `.tsx`, `.js`, etc.) that the agent will modify
+- Config files (`tsconfig.json`, `.eslintrc.js`, `vite.config.ts`, etc.)
+- Test fixtures or sample data
+
+**Minimal `package.json` example:**
+
+```json
+{
+  "name": "my-eval",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
+```
+
 ---
 
 ## Step-by-Step Guide
@@ -212,26 +244,32 @@ import { test, expect } from 'vitest'
 
 // Test 1: Check if the logout button exists somewhere in the code
 test('logout button exists in codebase', async () => {
-  // Find all TypeScript React files
   const files = await sandbox.glob('**/*.tsx')
+  const filesWithLogout: string[] = []
 
-  // Search each file for "logout"
   for (const file of files) {
     const content = await sandbox.readFile(file)
     if (/logout/i.test(content)) {
-      expect(true).toBe(true)
-      return  // Found it! Test passes.
+      filesWithLogout.push(file)
     }
   }
 
-  // If we get here, we never found it
-  expect.fail('No logout button found')
+  // Provide a helpful error message if the test fails
+  expect(
+    filesWithLogout.length,
+    `Expected 'logout' in at least one .tsx file. Searched ${files.length} files: ${files.join(', ')}`
+  ).toBeGreaterThan(0)
 })
 
 // Test 2: Make sure the app still builds (agent didn't break anything)
 test('app still builds', async () => {
   const result = await sandbox.exec('npm run build')
-  expect(result.exitCode).toBe(0)  // Exit code 0 = success
+
+  // Include build output in error message for easier debugging
+  expect(
+    result.exitCode,
+    `Build failed with exit code ${result.exitCode}.\nstderr: ${result.stderr}\nstdout: ${result.stdout}`
+  ).toBe(0)
 })
 ```
 
@@ -254,6 +292,16 @@ try {
 } catch (err) {
   // File doesn't exist, handle gracefully
 }
+```
+
+**Important:** All sandbox methods are asynchronous. Always use `await`:
+
+```typescript
+// WRONG - test may pass incorrectly because you're not awaiting the result
+const content = sandbox.readFile('src/App.tsx')  // Returns Promise, not string!
+
+// CORRECT
+const content = await sandbox.readFile('src/App.tsx')
 ```
 
 **Note:** You don't need to install `@vercel/eval-framework` in your eval folder. The framework provides it automatically when running tests.
@@ -469,12 +517,22 @@ test('existing tests still pass', async () => {
 
 Evals are **pass or fail**—there's no partial credit.
 
-To pass, ALL of these must succeed:
-1. Setup function (if you defined one)
-2. All npm scripts in the `scripts` array (if you defined any)
-3. All vitest tests in EVAL.ts
+**Execution order** (each step must succeed before the next runs):
 
-If any step fails, the entire eval run is marked as failed.
+```
+1. Setup function (if defined)
+       ↓
+2. Agent executes the prompt
+       ↓
+3. npm scripts from `scripts` array, in order
+   (stops on first failure)
+       ↓
+4. All vitest tests in EVAL.ts
+       ↓
+   PASS or FAIL
+```
+
+If any step fails, the entire eval run is marked as failed and subsequent steps are skipped.
 
 ---
 

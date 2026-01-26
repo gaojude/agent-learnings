@@ -45,21 +45,21 @@ Requirements:
 
 ### EVAL.ts
 
-Validation tests. Uses `defineEval` which provides the sandbox:
+Validation tests. Uses `defineEval` which provides the sandbox and files:
 
 ```ts
 // evals/add-button/EVAL.ts
 import { defineEval } from '@vercel/eval-framework'
 import { test, expect } from 'vitest'
 
-export default defineEval((sandbox) => {
+export default defineEval((sandbox, files) => {
   test('logout button exists somewhere in codebase', () => {
-    const hasLogout = Object.values(sandbox.files).some(c => /logout/i.test(c))
+    const hasLogout = Object.values(files).some(c => /logout/i.test(c))
     expect(hasLogout).toBe(true)
   })
 
   test('logout button has click handler', () => {
-    const hasHandler = Object.values(sandbox.files).some(c => /onClick.*logout/i.test(c))
+    const hasHandler = Object.values(files).some(c => /onClick.*logout/i.test(c))
     expect(hasHandler).toBe(true)
   })
 
@@ -71,6 +71,12 @@ export default defineEval((sandbox) => {
   })
 })
 ```
+
+**`files`:** A `Record<string, string>` mapping file paths to contents, populated after agent runs.
+
+- **Paths:** Relative to project root, no leading `./` (e.g., `src/App.tsx`)
+- **Excluded:** `node_modules/`, `.git/`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `EVAL.ts`
+- **Binary files:** Excluded. Only text files included.
 
 Use standard vitest assertions. The framework doesn't abstract vitest—you get full access to all its features.
 
@@ -332,15 +338,10 @@ interface Sandbox {
   exec(cmd: string): Promise<{ stdout: string; stderr: string; exitCode: number }>
   readFile(path: string): Promise<string>
   writeFile(path: string, content: string): Promise<void>
-  files: Record<string, string>  // populated after agent runs (EVAL.ts only)
 }
 ```
 
-**`sandbox.files`:** A `Record<string, string>` mapping file paths to contents. Only available in EVAL.ts (after agent has run).
-
-- **Paths:** Relative to project root, no leading `./` (e.g., `src/App.tsx`)
-- **Excluded:** `node_modules/`, `.git/`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `EVAL.ts`
-- **Binary files:** Excluded. Only text files included.
+Same interface used in both `setup` and `defineEval`.
 
 ### Vercel Sandbox
 

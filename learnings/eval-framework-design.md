@@ -1,6 +1,7 @@
 # Eval Framework Design
 
 **Date:** 2026-01-26
+**Author:** judegao
 **Project:** @vercel/eval-framework
 
 ## Overview

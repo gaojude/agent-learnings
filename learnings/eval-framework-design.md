@@ -354,3 +354,18 @@ Firecracker MicroVMs via `@vercel/sandbox`. Hard isolation, ephemeral, auto-clea
 ### Local Sandbox
 
 Local filesystem. No isolation—runs in temp directory on host machine.
+
+## Environment Variables
+
+```bash
+# .env.example
+
+# Vercel Sandbox (optional)
+# If set, uses Vercel's isolated MicroVMs
+# If not set, falls back to local sandbox
+VERCEL_TOKEN=
+
+# Claude Code agent (required)
+# API key for Anthropic's Claude API
+ANTHROPIC_API_KEY=
+```

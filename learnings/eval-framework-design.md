@@ -71,11 +71,17 @@ describe('logout button', () => {
 
 | Export | Type | Description |
 |--------|------|-------------|
-| `scripts` | `string[]` | npm scripts that must exit 0 (optional) |
+| `scripts` | `string[]` | npm scripts that must exit 0 (optional, default: `[]`) |
 
 ### The `files` Object
 
-The framework provides `files`—a `Record<string, string>` mapping file paths to contents. Populated with the agent's output (excluding `node_modules`, `.git`, lockfiles, etc.) before tests run.
+The framework provides `files`—a `Record<string, string>` mapping file paths to contents.
+
+**Paths:** Relative to project root, no leading `./` (e.g., `src/App.tsx`, not `./src/App.tsx`)
+
+**Excluded:** `node_modules/`, `.git/`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `EVAL.ts`
+
+**Binary files:** Excluded. Only text files are included.
 
 ```ts
 import { files } from '@vercel/eval-framework'
@@ -91,21 +97,28 @@ Use standard vitest assertions. The framework doesn't abstract vitest—you get 
 
 1. Copy eval folder to sandbox (excluding `PROMPT.md`, `EVAL.ts`)
 2. Run `npm install`
-3. Run prehook (if defined in config)
-4. Run agent with contents of `PROMPT.md`
+3. Run prehook (if defined in config). **If prehook fails, eval fails.**
+4. Run agent with contents of `PROMPT.md` (passed as CLI argument to claude-code)
 5. Populate `files` with output
-6. Inject `EVAL.ts`
-7. Run vitest
-8. Run `scripts` (if defined)
+6. Inject `EVAL.ts` into project root
+7. Run `scripts` in order (if defined). **Stops on first failure.**
+8. Run `npx vitest run EVAL.ts`
 9. Result: **0 or 1**
+
+**Timeouts:** Agent has 10 minute timeout. Scripts have 2 minute timeout each.
+
+**Parallelism:** Evals run sequentially. Multiple runs of the same eval run sequentially.
+
+**Sandbox cleanup:** Sandbox is deleted after each run. For debugging, use `--keep-sandbox` flag.
 
 ## Scoring
 
 An eval is binary: **pass (1) or fail (0)**. No partial scores.
 
 For an eval to pass:
-- All vitest tests must pass
+- Prehook must succeed (if defined)
 - All `scripts` must exit 0
+- All vitest tests must pass
 
 ## CLI
 
@@ -120,6 +133,10 @@ npx eval configs/with-skill.ts
 npx eval configs/baseline.ts
 ```
 
+**Flags:**
+- `--keep-sandbox` — don't delete sandbox after run (for debugging)
+- `--eval <name>` — run only this eval (overrides config's `evals` field)
+
 ## Configs
 
 ```ts
@@ -131,34 +148,39 @@ export default {
     await sandbox.exec('npx @vercel/next-skill install')
   },
   runs: 10,
-  evals: ['add-button', 'fix-auth'],  // or '*' for all
+  evals: ['add-button', 'fix-auth'],  // or omit for all
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `agent` | `'claude-code'` | Which agent to use (default: `'claude-code'`) |
-| `model` | `string` | Model to use (e.g., `'opus'`, `'sonnet'`) |
-| `prehook` | `(sandbox) => Promise<void>` | Setup before agent runs (optional) |
-| `runs` | `number` | Number of runs per eval (default: 1) |
-| `bestOf` | `number` | Stop on first pass (alternative to `runs`) |
-| `evals` | `string[]` | Which evals to run (default: all) |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `agent` | `'claude-code'` | `'claude-code'` | Which agent to use |
+| `model` | `string` | `'sonnet'` | Model to use (e.g., `'opus'`, `'sonnet'`) |
+| `prehook` | `(sandbox) => Promise<void>` | none | Setup before agent runs |
+| `runs` | `number` | `1` | Number of runs per eval |
+| `bestOf` | `number` | none | Stop on first pass (mutually exclusive with `runs`) |
+| `evals` | `string[]` | all | Which evals to run (folder names) |
+
+**`runs` vs `bestOf`:** Cannot specify both. If both specified, error.
 
 Minimal config:
 
 ```ts
 // configs/baseline.ts
-export default {
-  model: 'sonnet',
-}
+export default {}
 ```
+
+Uses all defaults: claude-code agent, sonnet model, 1 run, all evals.
 
 ## Results
 
 Each config run produces results in `results/<config-name>/<timestamp>/`:
 
+- **Config name:** Derived from filename without extension (e.g., `with-skill.ts` → `with-skill`)
+- **Timestamp:** ISO8601 format, UTC, colons replaced with dashes (e.g., `2026-01-26T12-00-00Z`)
+
 ```
-results/with-skill/2026-01-26T12-00-00/
+results/with-skill/2026-01-26T12-00-00Z/
 ├── add-button/
 │   ├── run-1/
 │   │   ├── result.json
@@ -181,8 +203,10 @@ Small, scannable. Pointers to large files:
 ```json
 {
   "eval": "add-button",
+  "run": 1,
   "passed": false,
   "duration": 45200,
+  "prehook": { "passed": true, "duration": 1200 },
   "scripts": {
     "build": { "passed": true, "duration": 12300, "output": "./outputs/build.txt" },
     "lint": { "passed": false, "duration": 2100, "output": "./outputs/lint.txt" }
@@ -192,13 +216,18 @@ Small, scannable. Pointers to large files:
     "failures": ["logout button exists"],
     "output": "./outputs/tests.txt"
   },
-  "transcript": "./transcript.jsonl"
+  "transcript": "./transcript.jsonl",
+  "config": {
+    "agent": "claude-code",
+    "model": "opus"
+  },
+  "timestamp": "2026-01-26T12:00:00Z"
 }
 ```
 
 ### summary.json
 
-Aggregated stats across runs:
+Aggregated stats across runs (only generated when `runs > 1` or `bestOf` is set):
 
 ```json
 {
@@ -208,6 +237,17 @@ Aggregated stats across runs:
   "passRate": 0.7,
   "meanDuration": 45200,
   "stddev": 8300
+}
+```
+
+For `bestOf`, also includes:
+
+```json
+{
+  "eval": "add-button",
+  "bestOf": 5,
+  "passed": true,
+  "attemptsUntilPass": 3
 }
 ```
 
@@ -229,4 +269,4 @@ interface Sandbox {
 }
 ```
 
-Providers: local, Docker, Vercel Sandbox.
+Providers: local, Docker, Vercel Sandbox. (Configured via environment variable `EVAL_SANDBOX_PROVIDER`, default: `local`)

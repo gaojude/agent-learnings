@@ -1,7 +1,7 @@
 # Eval Framework Design
 
 **Date:** 2026-01-26
-**Project:** @anthropic/eval-framework
+**Project:** @vercel/eval-framework
 
 ## Overview
 
@@ -51,7 +51,7 @@ evals/
 Tests run on the host, access sandbox via API:
 
 ```ts
-import { test, expect } from '@anthropic/eval-framework/test'
+import { test, expect } from '@vercel/eval-framework/test'
 
 // File assertions
 test('button exists', async ({ sandbox }) => {
@@ -118,11 +118,11 @@ Sandbox providers: local, Docker, Vercel Sandbox.
 ## CLI
 
 ```bash
-npx @anthropic/eval                    # Run all evals
-npx @anthropic/eval add-button         # Run specific eval
-npx @anthropic/eval --agent codex      # Swap agent
-npx @anthropic/eval --sandbox docker   # Use Docker isolation
-npx @anthropic/eval --json             # Machine-readable output
+npx @vercel/eval                    # Run all evals
+npx @vercel/eval add-button         # Run specific eval
+npx @vercel/eval --agent codex      # Swap agent
+npx @vercel/eval --sandbox docker   # Use Docker isolation
+npx @vercel/eval --json             # Machine-readable output
 ```
 
 ## Progressive Disclosure
@@ -141,7 +141,7 @@ export default {
 
 **Level 3 - Programmatic:**
 ```ts
-import { createEval } from '@anthropic/eval-framework'
+import { createEval } from '@vercel/eval-framework'
 
 const result = await createEval({
   prompt: 'Add a submit button',
@@ -162,7 +162,7 @@ const result = await createEval({
 ## Architecture
 
 ```
-@anthropic/eval-framework/
+@vercel/eval-framework/
   core/
     runner.ts           # Orchestration
     sandbox/

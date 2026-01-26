@@ -417,9 +417,12 @@ export default {
   timeout: 600,
 
   // Setup function that runs BEFORE the agent starts
-  // Use this to configure the environment
+  // The `sandbox` parameter has the same API as in EVAL.ts:
+  // exec(), readFile(), writeFile(), glob()
+  // Use this to install dependencies, configure environment, etc.
   // Default: none
   setup: async (sandbox) => {
+    await sandbox.exec('npm install')
     await sandbox.exec('npx skills add vercel/next-skill')
   },
 }
@@ -487,6 +490,31 @@ export default {
 }
 ```
 
+### Pattern: Test behavior, not implementation
+
+AI agents may solve tasks in unexpected but valid ways. Write tests that verify the *outcome*, not the specific implementation:
+
+```typescript
+// BAD: Tests specific implementation details
+test('logout button in header', async () => {
+  const header = await sandbox.readFile('src/components/Header.tsx')
+  expect(header).toContain('logout')  // Fails if agent puts it elsewhere!
+})
+
+// GOOD: Tests that the feature exists somewhere
+test('logout functionality exists', async () => {
+  const result = await sandbox.exec('grep -r "logout" src/')
+  expect(result.exitCode).toBe(0)  // grep returns 0 if pattern found
+})
+
+// BETTER: Tests actual behavior via e2e tests
+test('logout works end-to-end', async () => {
+  await sandbox.exec('npm run build')
+  const result = await sandbox.exec('npm run test:e2e -- --grep "logout"')
+  expect(result.exitCode).toBe(0)
+})
+```
+
 ---
 
 ## Designing Effective Evals
@@ -533,6 +561,19 @@ Evals are **pass or fail**—there's no partial credit.
 ```
 
 If any step fails, the entire eval run is marked as failed and subsequent steps are skipped.
+
+### Failure Modes
+
+Understanding why an eval failed helps you debug effectively:
+
+| Failure Type | What Happened | How to Debug |
+|--------------|---------------|--------------|
+| **Agent timeout** | Agent exceeded the `timeout` limit (default: 5 min) | Check `transcript.jsonl` for loops or stuck states |
+| **Agent crash** | Agent encountered an unrecoverable error | Check `transcript.jsonl` for error messages |
+| **Script failure** | An npm script (build, lint, etc.) returned non-zero | Check `outputs/build.txt` or relevant script log |
+| **Test failure** | EVAL.ts tests failed assertions | Check `outputs/tests.txt` for assertion details |
+| **No changes** | Agent completed but didn't modify any files | Tests run on unchanged code; likely fails |
+| **Setup failure** | The `setup` function threw an error | Check error output; verify sandbox access |
 
 ---
 

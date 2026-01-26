@@ -20,14 +20,14 @@ my-evals/
 │       ├── package.json
 │       ├── PROMPT.md         # What to ask the agent
 │       └── EVAL.ts           # How to validate (hidden from agent)
-├── configs/                  # Optional run configurations
+├── configs/
 │   └── with-skill.ts
 └── results/
 ```
 
 The eval folder **is** the fixture—a normal Node.js project. Two special files:
-- `PROMPT.md` — the prompt sent to the agent
-- `EVAL.ts` — validation tests (agent never sees this)
+- `PROMPT.md` — the prompt sent to the agent (static markdown)
+- `EVAL.ts` — validation tests (agent never sees this, can import from fixture)
 
 ## Writing Evals
 
@@ -91,12 +91,13 @@ Use standard vitest assertions. The framework doesn't abstract vitest—you get 
 
 1. Copy eval folder to sandbox (excluding `PROMPT.md`, `EVAL.ts`)
 2. Run `npm install`
-3. Run agent with contents of `PROMPT.md`
-4. Populate `files` with output
-5. Inject `EVAL.ts`
-6. Run vitest
-7. Run `scripts` (if defined)
-8. Result: **0 or 1**
+3. Run prehook (if defined in config)
+4. Run agent with contents of `PROMPT.md`
+5. Populate `files` with output
+6. Inject `EVAL.ts`
+7. Run vitest
+8. Run `scripts` (if defined)
+9. Result: **0 or 1**
 
 ## Scoring
 
@@ -108,121 +109,115 @@ For an eval to pass:
 
 ## CLI
 
-The framework ships with a built-in claude-code agent:
+```bash
+npx eval <config>
+```
+
+That's it. Config file defines everything.
 
 ```bash
-# Single run (uses claude-code by default)
-npx eval
-
-# Run specific eval
-npx eval add-button
-
-# Best of N (stop on first pass)
-npx eval --best-of 5
-
-# Flakiness testing (run all, report stats)
-npx eval --runs 10
-
-# With options
-npx eval --model opus --runs 10
+npx eval configs/with-skill.ts
+npx eval configs/baseline.ts
 ```
 
 ## Configs
 
-For reusable setups, create a config file:
-
 ```ts
 // configs/with-skill.ts
 export default {
+  agent: 'claude-code',           // enum: 'claude-code' | future agents
   model: 'opus',
-  skills: ['@vercel/next-skill'],
-  runs: 10,
-}
-```
-
-```bash
-npx eval --config configs/with-skill.ts
-```
-
-### Custom Agent
-
-For non-claude-code agents, define a custom agent in the config:
-
-```ts
-// configs/custom.ts
-export default {
-  agent: async (prompt, sandbox) => {
-    // your agent logic
-    await sandbox.exec(`my-agent "${prompt}"`)
-    return { transcript: [...] }
+  prehook: async (sandbox) => {
+    await sandbox.exec('npx @vercel/next-skill install')
   },
   runs: 10,
+  evals: ['add-button', 'fix-auth'],  // or '*' for all
 }
 ```
 
-## CLI Output
+| Field | Type | Description |
+|-------|------|-------------|
+| `agent` | `'claude-code'` | Which agent to use (default: `'claude-code'`) |
+| `model` | `string` | Model to use (e.g., `'opus'`, `'sonnet'`) |
+| `prehook` | `(sandbox) => Promise<void>` | Setup before agent runs (optional) |
+| `runs` | `number` | Number of runs per eval (default: 1) |
+| `bestOf` | `number` | Stop on first pass (alternative to `runs`) |
+| `evals` | `string[]` | Which evals to run (default: all) |
 
-### Single Run
+Minimal config:
 
-```
-npx eval add-button
-
-add-button ✓ PASS (45.2s)
-```
-
-### Flakiness Report
-
-```
-npx eval --runs 10
-
-add-button (10 runs)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Pass rate:  7/10 (70%)
-Mean:       45.2s
-Stddev:     8.3s
-```
-
-### Config Comparison
-
-```
-npx eval --config a.ts --config b.ts --runs 10
-
-add-button (10 runs each)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            config-a    config-b
-Pass rate   4/10        9/10
-Mean        48.2s       41.3s
-
-Winner: config-b (90%)
+```ts
+// configs/baseline.ts
+export default {
+  model: 'sonnet',
+}
 ```
 
 ## Results
 
-Each run produces a result file:
+Each config run produces results in `results/<config-name>/<timestamp>/`:
+
+```
+results/with-skill/2026-01-26T12-00-00/
+├── add-button/
+│   ├── run-1/
+│   │   ├── result.json
+│   │   ├── transcript.jsonl
+│   │   └── outputs/
+│   │       ├── build.txt
+│   │       ├── lint.txt
+│   │       └── tests.txt
+│   ├── run-2/
+│   │   └── ...
+│   └── summary.json
+└── fix-auth/
+    └── ...
+```
+
+### result.json
+
+Small, scannable. Pointers to large files:
 
 ```json
 {
   "eval": "add-button",
-  "passed": true,
+  "passed": false,
   "duration": 45200,
   "scripts": {
-    "build": { "passed": true, "duration": 12300 },
-    "lint": { "passed": true, "duration": 2100 }
+    "build": { "passed": true, "duration": 12300, "output": "./outputs/build.txt" },
+    "lint": { "passed": false, "duration": 2100, "output": "./outputs/lint.txt" }
   },
   "tests": {
-    "passed": true,
-    "failures": []
+    "passed": false,
+    "failures": ["logout button exists"],
+    "output": "./outputs/tests.txt"
   },
-  "transcript": [...],
-  "metadata": {
-    "config": "with-skill.ts",
-    "model": "opus",
-    "timestamp": "2026-01-26T12:00:00Z"
-  }
+  "transcript": "./transcript.jsonl"
 }
 ```
 
-The transcript is critical for improvement. When an eval fails, analyze it to derive learnings and improve the agent.
+### summary.json
+
+Aggregated stats across runs:
+
+```json
+{
+  "eval": "add-button",
+  "runs": 10,
+  "passed": 7,
+  "passRate": 0.7,
+  "meanDuration": 45200,
+  "stddev": 8300
+}
+```
+
+### transcript.jsonl
+
+Full agent output. Format depends on agent (JSONL for claude-code). Framework stores it as-is, doesn't parse it.
+
+## Reporting
+
+The framework outputs structured JSON. Users build their own reports, dashboards, or analysis scripts from the results.
 
 ## Sandbox
 

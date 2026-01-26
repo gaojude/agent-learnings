@@ -20,6 +20,82 @@ This framework lets you **automatically test AI agents** by:
 
 ---
 
+## Prerequisites
+
+Before you begin, make sure you have:
+
+| Requirement | How to check | How to install |
+|-------------|--------------|----------------|
+| **Node.js 18+** | `node --version` | [nodejs.org](https://nodejs.org) |
+| **npm 9+** | `npm --version` | Comes with Node.js |
+| **Anthropic API key** | Check your [Anthropic Console](https://console.anthropic.com) | Sign up at anthropic.com |
+| **Vercel account** | Check your [Vercel Dashboard](https://vercel.com/dashboard) | Sign up at vercel.com |
+
+**Assumed knowledge:**
+- Basic command line usage (running commands in a terminal)
+- Basic understanding of JavaScript/TypeScript
+- Familiarity with npm (installing packages, running scripts)
+- Understanding of what environment variables are (`.env` files)
+
+---
+
+## How It Works (Visual Overview)
+
+Here's what happens when you run an eval:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         YOUR MACHINE                                    │
+│                                                                         │
+│  ┌─────────────────┐      ┌─────────────────┐      ┌────────────────┐  │
+│  │ experiments/    │      │ evals/          │      │ .env           │  │
+│  │ my-experiment.ts│      │ add-button/     │      │ API keys       │  │
+│  └────────┬────────┘      └────────┬────────┘      └───────┬────────┘  │
+│           │                        │                       │           │
+│           └────────────────────────┼───────────────────────┘           │
+│                                    │                                    │
+│                          ┌─────────▼─────────┐                         │
+│                          │  npx eval run     │                         │
+│                          │  (framework CLI)  │                         │
+│                          └─────────┬─────────┘                         │
+└────────────────────────────────────┼────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     VERCEL SANDBOX (isolated VM)                        │
+│                                                                         │
+│   Step 1: Copy eval fixture ──────────────────────────────────────────▶ │
+│                                                                         │
+│   Step 2: Agent reads PROMPT.md ──────────────────────────────────────▶ │
+│                                                                         │
+│   Step 3: Agent modifies code ────────────────────────────────────────▶ │
+│           (src/App.tsx, etc.)                                           │
+│                                                                         │
+│   Step 4: Run npm scripts ────────────────────────────────────────────▶ │
+│           (build, lint, typecheck)                                      │
+│                                                                         │
+│   Step 5: Run EVAL.ts tests ──────────────────────────────────────────▶ │
+│           (vitest)                                                      │
+│                                                                         │
+│   Step 6: Return results ─────────────────────────────────────────────▶ │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         YOUR MACHINE                                    │
+│                                                                         │
+│   results/my-experiment/2026-01-26T12-00-00Z/                          │
+│   ├── add-button/                                                       │
+│   │   ├── run-1/result.json      ← Pass/fail + timing                  │
+│   │   ├── run-1/transcript.jsonl ← Full agent conversation             │
+│   │   └── summary.json           ← Aggregated pass rate                │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Quick Start
 
 ```bash
@@ -364,9 +440,106 @@ The import is resolved by the framework's test harness, not by your node_modules
 
 ## Troubleshooting
 
+### Quick Reference
+
 | Problem | Solution |
 |---------|----------|
 | "Why did my eval fail?" | Check `transcript.jsonl` to see what the agent did |
 | "Agent seemed to succeed but tests failed" | Check `outputs/tests.txt` for test error details |
 | "Setup keeps failing" | Verify your eval fixture has a valid `package.json` |
 | "Missing VERCEL_TOKEN" | Add `VERCEL_TOKEN` or `VERCEL_OIDC_TOKEN` to your `.env` file |
+
+### Common Errors and What They Mean
+
+#### Authentication Errors
+
+```
+Error: Invalid API key
+```
+**Cause:** Your `ANTHROPIC_API_KEY` is missing, expired, or incorrect.
+**Fix:** Check your `.env` file and verify the key at [console.anthropic.com](https://console.anthropic.com).
+
+```
+Error: VERCEL_TOKEN is required
+```
+**Cause:** Missing Vercel credentials for sandbox access.
+**Fix:** Add `VERCEL_TOKEN=your-token` to your `.env` file. Get a token from your [Vercel account settings](https://vercel.com/account/tokens).
+
+#### Rate Limiting
+
+```
+Error: Rate limit exceeded (429)
+```
+**Cause:** You've made too many API requests in a short time.
+**Fix:** Wait a few minutes, then retry. Consider reducing `runs` count or adding delays between experiments.
+
+#### Timeout Errors
+
+```
+Error: Agent timed out after 300s
+```
+**Cause:** The agent took too long to complete the task.
+**Fix:**
+- Check if your task is too complex—consider breaking it into smaller evals
+- Check `transcript.jsonl` to see if the agent got stuck in a loop
+- Verify your eval fixture doesn't have dependency installation issues
+
+#### EVAL.ts Syntax Errors
+
+```
+Error: Failed to parse EVAL.ts
+SyntaxError: Unexpected token at line 15
+```
+**Cause:** Your test file has a JavaScript/TypeScript syntax error.
+**Fix:** Run `npx tsc EVAL.ts --noEmit` locally to check for syntax errors before running the eval.
+
+#### Sandbox Errors
+
+```
+Error: Sandbox creation failed
+```
+**Cause:** Issue provisioning the isolated VM.
+**Fix:**
+- Check your network connection
+- Verify your Vercel token has the correct permissions
+- Try again—this can be a transient infrastructure issue
+
+```
+Error: Command failed: npm install (exit code 1)
+```
+**Cause:** Dependencies failed to install in the sandbox.
+**Fix:**
+- Check that your `package.json` has valid dependencies
+- Verify all packages are published to npm (no private/local packages)
+- Check `outputs/install.txt` for detailed error logs
+
+#### Test Failures
+
+```
+FAIL  EVAL.ts > logout button exists in codebase
+AssertionError: No logout button found
+```
+**Cause:** Your test ran, but the assertion failed—the agent didn't complete the task correctly.
+**Fix:**
+- Check `transcript.jsonl` to see what the agent actually did
+- Your prompt might be ambiguous—try making it more specific
+- The task might be too hard for the model—try a more capable model
+
+### Debug Checklist
+
+When an eval fails unexpectedly, check these files in order:
+
+1. **`result.json`** — Did it pass or fail? What was the exit code?
+2. **`transcript.jsonl`** — What did the agent do? Did it understand the task?
+3. **`outputs/install.txt`** — Did dependencies install correctly?
+4. **`outputs/build.txt`** — Did the build succeed?
+5. **`outputs/tests.txt`** — What did the test output say?
+
+### Still Stuck?
+
+If you've checked all of the above and still can't figure out the issue:
+
+1. Try running with `runs: 1` to isolate the problem
+2. Simplify your EVAL.ts to a single basic test
+3. Check that your eval works with a simpler prompt first
+4. Verify your fixture runs correctly outside the framework (`npm install && npm run build`)

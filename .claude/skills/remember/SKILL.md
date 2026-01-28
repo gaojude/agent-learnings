@@ -10,7 +10,7 @@ $ARGUMENTS
 Instructions:
 1. Parse the topic from the input (text before the colon, or generate a slug from content)
 2. IMPORTANT: Always save to the existing `learnings/` folder - do NOT create new folders like `patterns/`, `notes/`, `skills/`, etc.
-3. Create a new file at ~/code/projects/agent-learnings/learnings/{topic-slug}.md
+3. Create a new file at ~/code/projects/agent-learnings/learnings/{YYYY-MM-DD}-{topic-slug}.md (prefix with today's date for easy tracking)
 4. Format the learning with:
    - Title as H1
    - Date (today's date)
@@ -22,6 +22,6 @@ Instructions:
    ```
 6. Confirm what was saved, output the raw GitHub URL, and copy it to clipboard:
    ```bash
-   echo "https://raw.githubusercontent.com/gaojude/agent-learnings/refs/heads/main/learnings/{topic-slug}.md" | pbcopy
+   echo "https://raw.githubusercontent.com/gaojude/agent-learnings/refs/heads/main/learnings/{YYYY-MM-DD}-{topic-slug}.md" | pbcopy
    ```
    Then display the URL to the user.

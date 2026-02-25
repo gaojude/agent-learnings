@@ -41,10 +41,30 @@ Found during eval testing with `nextdocfs` CLI (agent-038-refresh-settings):
 - `https://nextjs.org/docs/app/getting-started/updating-data` — in the Forms section or the Refreshing section
 - Possibly also in `https://nextjs.org/docs/app/api-reference/functions/refresh`
 
+## Confirmed: No Docs Coverage Anywhere
+
+Searched the entire Next.js docs corpus for any mention of the void constraint:
+
+- `nextdocfs grep "void" app` — only hits are in cache handler configs and unrelated APIs
+- `nextdocfs grep "formData.*void" app` — zero matches
+- `nextdocfs grep "action.*void" app` — zero matches
+- `nextdocfs grep "formAction" app` — 24 matches across 6 pages, none mention return type
+
+Every server action example in the docs happens to return nothing (correct by coincidence), but **no page in the entire docs** explicitly states the `void` constraint. The relevant pages that should mention it:
+
+- `app/getting-started/updating-data` — 16 mentions of `return`, zero of `void`
+- `app/guides/forms` — heavy form action coverage, no return type guidance
+- `app/api-reference/components/form` — describes `action` prop, no type signature shown
+
+This is a React/TypeScript constraint (`<form action>` expects `(formData: FormData) => void | Promise<void>`) that the Next.js docs completely omit.
+
 ## Search Commands Used
 
 ```bash
 nextdocfs grep "refresh" app/getting-started/updating-data
 nextdocfs grep "return" app/getting-started/updating-data
 nextdocfs grep "void" app/getting-started/updating-data  # no matches
+nextdocfs grep "void" app                                 # only cache handler hits
+nextdocfs grep "formData.*void" app                       # zero matches
+nextdocfs grep "formAction" app                           # 24 hits, none mention return type
 ```

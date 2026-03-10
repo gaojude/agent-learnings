@@ -1,64 +1,58 @@
-# Async Next Browser: Cloud Architecture Vision
+# Async Next Browser: Running an AI Dev Environment in the Cloud
 
 **Date:** 2026-03-10
 **Project:** next-browser + agent-eval
 **Status:** Brain dump / planning phase
 
-## Context
+## Where We Are Today
 
-Next Browser currently handles **synchronous** AI flows — developers collaboratively work with an agent on Next.js-specific problems (PPR, etc.) in real-time. The next step is exploring **asynchronous** flows.
+We've nailed down the synchronous part of Next Browser. Today, Next Browser is an interactive AI flow that lets developers collaboratively work with an agent to solve Next.js-specific problems — things like PPR (Partial Prerendering), server components, caching, and other framework-level challenges that are hard to get right. The developer and the agent work together in real-time: the agent looks at your code, runs the dev server, opens a browser, inspects the result, and helps you iterate.
 
-## Core Primitive: Dev Server in Vercel Sandbox
+This works well. But it's inherently synchronous — you're sitting there, in a conversation, waiting for each step. The next thing to explore is: what does an **asynchronous** version of this look like?
 
-The foundational building block is running the dev server in the cloud (Vercel sandbox).
+## The First Primitive: Dev Server in the Cloud
 
-**What's needed in the sandbox:**
-1. **Dev server** — Pull from GitHub repo, `npm install`, run `next dev`
-2. **Next Browser (Chromium)** — Installed alongside dev server, opens browser against it
-3. **Claude Code session** — With Next Browser skills pre-loaded in context
+The foundational building block for any async flow is the ability to run the dev server remotely — specifically, in a Vercel sandbox. If we can get the dev server running in the cloud, we can build everything else on top of that.
 
-**Reference:** agent-eval already demonstrates:
-- Running Claude Code in Vercel sandbox (`@vercel/sandbox` + `claude --print`)
-- Sandbox file upload and project setup
-- BUT: only single-turn execution (agent gets prompt, runs to completion)
+We already have a reference for how to do parts of this. The agent-eval project demonstrates running Claude Code inside a Vercel sandbox using `@vercel/sandbox`. It shows how to upload project files, install dependencies, and execute agent commands in an isolated environment. So we know the sandbox infrastructure works.
 
-## Key Missing Piece: Multi-Turn Streaming
+Now imagine extending that. You link your Vercel account, pull from your GitHub repo, run `npm install`, and start `next dev` — all inside the sandbox. You also install Next Browser alongside it, which gives you Chromium running against the dev server (there's a specific way to set up headless Chromium in the sandbox; agent-eval has patterns for this). And finally, you spin up a Claude Code session inside the sandbox, pre-loaded with all the Next Browser skills in its context window.
 
-Agent-eval only does **one-turn** conversations. The async Next Browser needs **multi-turn conversation** with streaming updates between outside and inside the sandbox. Need to figure out how to:
-- Send messages into the sandbox session
-- Stream responses/updates back out
-- Maintain conversation state across turns
+At that point, you have a complete, self-contained AI development environment running in the cloud: a dev server, a browser that can inspect it, and an agent that knows how to use both.
 
-## Two Architectural Approaches
+## The Missing Piece: Multi-Turn Conversations
 
-### Option A: Full Remote (Agent Inside Sandbox)
+Here's where things get interesting — and where agent-eval falls short as a reference. Agent-eval only does **one-turn** conversations. You send the agent a prompt, it runs to completion, and you get the result. That's fine for evaluations, but it's not what we want here.
 
-Everything runs in the sandbox:
-- Dev server + Chromium + Agent (Claude Code with skills)
-- From the outside, it's just a conversation interface
-- **Product vision:** Log into Vercel → pick a project → start a conversation about Next.js tasks
-- Essentially building an agent product with a remote environment
+For an async Next Browser, we need **multi-turn conversations** that stream back and forth between the outside world and the sandbox. A developer should be able to start a conversation, get a response, ask follow-up questions, provide corrections, and watch the agent iterate — all while the agent is operating inside this remote environment. We need to figure out the protocol for passing messages in and streaming updates back out, while maintaining conversation state across turns.
 
-**Pros:** Clean separation, agent has direct filesystem access
-**Cons:** Need to solve multi-turn streaming into sandbox
+## Two Ways to Architect This
 
-### Option B: Hybrid (Agent Outside, Environment Inside)
+There are two fundamentally different ways to set this up, and they have very different tradeoffs.
 
-Only browser + dev server in sandbox; agent runs locally (e.g., Claude Code on user's machine).
+### Option A: Everything in the Sandbox
 
-**Pros:** Simpler agent setup, familiar local Claude Code experience
-**Cons:** Every file operation needs to be proxied as sandbox commands — reading files, editing files, running commands all need remote execution. Essentially need to replicate all of Next Browser's capabilities but over a remote boundary. Feels architecturally weird and fragile.
+In this approach, the agent lives inside the sandbox alongside the dev server and browser. From the outside, you're just talking to an API — you send messages in, you get responses back. The sandbox is a fully self-contained environment.
 
-## Open Questions
+This leads to a pretty clean product vision: you log into Vercel, choose a project, and start a conversation. The conversation is about Next.js tasks — "help me set up PPR," "why is this server component re-rendering," "optimize this route" — and behind the scenes, the agent is working in a real environment with your actual code, a running dev server, and a browser to verify its work.
 
-- How to implement multi-turn streaming between outside and sandbox?
-- Which architecture (A vs B) is more viable?
-- How to handle Chromium setup in Vercel sandbox specifically? (agent-eval doesn't have explicit Chromium setup yet)
-- How to link Vercel account + GitHub repo programmatically for sandbox setup?
+You're essentially building an agent product. From the user's perspective, it's just a chat interface. All the complexity — the dev server, the browser, the file system, the skills — is hidden behind the sandbox boundary.
 
-## Next Steps
+### Option B: Agent Outside, Environment Inside
 
-- [ ] Prototype dev server running in Vercel sandbox
-- [ ] Explore multi-turn conversation protocol for sandbox communication
-- [ ] Decide between Option A (full remote) vs Option B (hybrid)
-- [ ] Investigate Chromium-in-sandbox setup (headless Chrome in Vercel sandbox)
+The alternative is to keep the agent on the user's side — running locally in Claude Code, for instance — but have the dev server and browser running remotely in the sandbox. The agent does the same things Next Browser does today, but instead of operating on local files and a local dev server, it manipulates things inside the sandbox.
+
+This sounds simpler at first, but it gets weird quickly. Today, when the agent needs to read a file, it just reads it. When it needs to edit code, it just edits it. When it needs to check the browser, it opens Chromium locally. In this hybrid model, every single one of those operations needs to be proxied through the sandbox boundary. Reading a file becomes "send a read command to the sandbox." Editing a file becomes "send an edit command to the sandbox." You'd essentially need to replicate the entire Next Browser command surface, but over a remote connection.
+
+That's not just extra engineering work — it's architecturally fragile. You're adding a network boundary in the middle of what should be tight, low-latency interactions between the agent and its environment. It feels like the wrong abstraction.
+
+## What's Next
+
+The cleaner path seems to be Option A — put the agent in the sandbox with everything else, and figure out the multi-turn streaming problem. The key things to figure out are:
+
+1. Getting the dev server reliably running in the Vercel sandbox (pulling from GitHub, installing deps, starting `next dev`)
+2. Setting up Chromium inside the sandbox so Next Browser can do its thing
+3. Building a multi-turn conversation protocol that lets us stream messages in and out of the sandbox
+4. Pre-loading the Claude Code session with Next Browser skills so the agent has full capabilities from the start
+
+None of these are solved yet, but none of them are mysteries either — they're engineering problems with clear shapes. The agent-eval codebase gives us a starting point for most of them; the main gap is the multi-turn piece.

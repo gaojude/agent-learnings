@@ -1,8 +1,8 @@
-# Async Next Browser: Running an AI Dev Environment in the Cloud
+# Async Next Browser: Cloud Architecture Vision
 
 **Date:** 2026-03-10
 **Project:** next-browser + agent-eval
-**Status:** Brain dump / planning phase
+**Status:** Prototyped and validated. All 4 prototypes passing.
 
 ## Where We Are Today
 
@@ -14,45 +14,51 @@ This works well. But it's inherently synchronous — you're sitting there, in a 
 
 The foundational building block for any async flow is the ability to run the dev server remotely — specifically, in a Vercel sandbox. If we can get the dev server running in the cloud, we can build everything else on top of that.
 
-We already have a reference for how to do parts of this. The agent-eval project demonstrates running Claude Code inside a Vercel sandbox using `@vercel/sandbox`. It shows how to upload project files, install dependencies, and execute agent commands in an isolated environment. So we know the sandbox infrastructure works.
+**Validated:** Prototype 1 demonstrates this works in 18 seconds from zero to a running dev server with a public URL (`https://sb-*.vercel.run`).
 
-Now imagine extending that. You link your Vercel account, pull from your GitHub repo, run `npm install`, and start `next dev` — all inside the sandbox. You also install Next Browser alongside it, which gives you Chromium running against the dev server (there's a specific way to set up headless Chromium in the sandbox; agent-eval has patterns for this). And finally, you spin up a Claude Code session inside the sandbox, pre-loaded with all the Next Browser skills in its context window.
+## Chrome in the Sandbox
 
-At that point, you have a complete, self-contained AI development environment running in the cloud: a dev server, a browser that can inspect it, and an agent that knows how to use both.
+Headless Chromium runs in the Vercel sandbox using `@sparticuz/chromium` (pre-compiled for serverless). System dependencies are installed via `sudo dnf install` on Amazon Linux 2023. puppeteer-core connects via CDP WebSocket.
 
-## The Missing Piece: Multi-Turn Conversations
+**Validated:** Prototype 2 takes a pixel-perfect screenshot of the Next.js dev server from headless Chrome running inside the sandbox. 44 seconds total (24s of that is Chrome install, eliminable with snapshots).
 
-Here's where things get interesting — and where agent-eval falls short as a reference. Agent-eval only does **one-turn** conversations. You send the agent a prompt, it runs to completion, and you get the result. That's fine for evaluations, but it's not what we want here.
+## Multi-Turn Conversations: Solved
 
-For an async Next Browser, we need **multi-turn conversations** that stream back and forth between the outside world and the sandbox. A developer should be able to start a conversation, get a response, ask follow-up questions, provide corrections, and watch the agent iterate — all while the agent is operating inside this remote environment. We need to figure out the protocol for passing messages in and streaming updates back out, while maintaining conversation state across turns.
+The brain dump identified multi-turn streaming as the key missing piece. Turns out, the Anthropic SDK's standard messages API with tool use handles this natively. No custom WebSocket/SSE protocol needed.
 
-## Two Ways to Architect This
+**Architecture:** Agent runs outside the sandbox. Sandbox is exposed as tools (run_shell, read_file, write_file, browser_navigate, browser_screenshot, browser_get_text, browser_console_errors). Each turn: user message -> agent response with tool calls -> execute tools in sandbox -> return results -> continue.
 
-There are two fundamentally different ways to set this up, and they have very different tradeoffs.
+**Validated:** Prototypes 3 and 4 demonstrate multi-turn conversations where the agent explores files, creates pages, navigates the browser, takes screenshots, and verifies its own work.
 
-### Option A: Everything in the Sandbox
+## Architecture Decision: Modified Option A
 
-In this approach, the agent lives inside the sandbox alongside the dev server and browser. From the outside, you're just talking to an API — you send messages in, you get responses back. The sandbox is a fully self-contained environment.
+Two architectures were considered:
+- **Option A (Full Remote):** Everything in sandbox, agent drives from outside via tools
+- **Option B (Hybrid):** Agent runs locally, proxies every operation into sandbox
 
-This leads to a pretty clean product vision: you log into Vercel, choose a project, and start a conversation. The conversation is about Next.js tasks — "help me set up PPR," "why is this server component re-rendering," "optimize this route" — and behind the scenes, the agent is working in a real environment with your actual code, a running dev server, and a browser to verify its work.
+**Winner: Modified Option A.** The environment (dev server, Chrome) runs in the sandbox. The agent runs outside but operates on the sandbox via Anthropic SDK tool calls. This avoids the "every file operation is a proxy" problem from Option B — the tools are trivially simple, and the SDK handles conversation state.
 
-You're essentially building an agent product. From the user's perspective, it's just a chat interface. All the complexity — the dev server, the browser, the file system, the skills — is hidden behind the sandbox boundary.
+## Performance
 
-### Option B: Agent Outside, Environment Inside
-
-The alternative is to keep the agent on the user's side — running locally in Claude Code, for instance — but have the dev server and browser running remotely in the sandbox. The agent does the same things Next Browser does today, but instead of operating on local files and a local dev server, it manipulates things inside the sandbox.
-
-This sounds simpler at first, but it gets weird quickly. Today, when the agent needs to read a file, it just reads it. When it needs to edit code, it just edits it. When it needs to check the browser, it opens Chromium locally. In this hybrid model, every single one of those operations needs to be proxied through the sandbox boundary. Reading a file becomes "send a read command to the sandbox." Editing a file becomes "send an edit command to the sandbox." You'd essentially need to replicate the entire Next Browser command surface, but over a remote connection.
-
-That's not just extra engineering work — it's architecturally fragile. You're adding a network boundary in the middle of what should be tight, low-latency interactions between the agent and its environment. It feels like the wrong abstraction.
+| Operation                | Time  |
+|--------------------------|-------|
+| Sandbox creation         | ~2s   |
+| create-next-app          | ~12s  |
+| Chrome install           | ~24s  |
+| Chrome launch + CDP      | ~2.5s |
+| Dev server startup       | <1s   |
+| Full cold start          | ~40s  |
+| With snapshots (est.)    | ~5s   |
 
 ## What's Next
 
-The cleaner path seems to be Option A — put the agent in the sandbox with everything else, and figure out the multi-turn streaming problem. The key things to figure out are:
+1. **Sandbox snapshots** — Pre-bake Chrome + system deps, get cold start from 40s to ~5s
+2. **Next Browser in sandbox** — Install the actual Next Browser daemon inside for DevTools + PPR
+3. **Git source** — Clone user's repo instead of scaffolding
+4. **Streaming UI** — Web interface that streams the conversation
+5. **React DevTools via CDP** — Investigate getting DevTools data through CDP without extensions
 
-1. Getting the dev server reliably running in the Vercel sandbox (pulling from GitHub, installing deps, starting `next dev`)
-2. Setting up Chromium inside the sandbox so Next Browser can do its thing
-3. Building a multi-turn conversation protocol that lets us stream messages in and out of the sandbox
-4. Pre-loading the Claude Code session with Next Browser skills so the agent has full capabilities from the start
+## Prototypes
 
-None of these are solved yet, but none of them are mysteries either — they're engineering problems with clear shapes. The agent-eval codebase gives us a starting point for most of them; the main gap is the multi-turn piece.
+Located at `next-browser/prototypes/cloud/`. Run with `npm run proto:sandbox|chrome|agent|full`.
+Full technical report at `prototypes/cloud/REPORT.md`.
